@@ -25,6 +25,7 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `MonsoonConvection/ext/MonsoonConvectionCUDAExt.jl` | GPU warm-up run for precompilation, used only with CUDA. |
 | `setup_precompile.jl` | Requests the hardware to precompile for (`--arch=cpu` or `--arch=gpu`), then precompiles. |
+| `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu` (submit from the run directory). |
 | `preflight.jl` | Command-line parsing and the quick hardware check, run before any package loads. |
 | `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
 | `LocalPreferences.toml` | Created by `setup_precompile.jl --arch=gpu`; records the GPU precompile request. |
@@ -281,40 +282,32 @@ The progress lines show the wall time per 100 steps. Multiply by the expected nu
 
 ### 4. Production runs (batch)
 
-`monsoon_job.sh`:
+Use the job script [`monsoon_job.sh`](monsoon_job.sh) in the repository. Submit it **from the
+run directory** (one per experiment). Output, checkpoints and the Slurm log `slurm-<jobid>.out`
+are written there:
 
 ```sh
-#!/bin/bash
-#SBATCH --job-name=monsoon
-#SBATCH --partition=ceoas-gpu
-#SBATCH --gres=gpu:1               # or --gres=gpu:<type>:1, or --gpus=1 (see step 0)
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=64G                  # host memory; output is staged on the host
-#SBATCH --time=48:00:00            # within the partition limit (sinfo %l)
-#SBATCH --output=slurm-%j.out
-
-export JULIA_DEPOT_PATH=/path/to/shared/julia_depot
-# export JULIA_CPU_TARGET="..."    # same value used when precompiling
-
-REPO=$HOME/monsoon-breeze
-RUN=/path/to/scratch/monsoon_run1          # one directory per experiment
-mkdir -p $RUN && cd $RUN
-
-# Stop 1 h before the Slurm limit so the run checkpoints cleanly.
-# Pass --restart for continuation jobs: sbatch monsoon_job.sh --restart
-srun julia --project=$REPO $REPO/monsoon_convection.jl --arch=gpu --wall_time=47h "$@"
+mkdir -p /path/to/scratch/monsoon_run1 && cd /path/to/scratch/monsoon_run1
+sbatch ~/monsoon-breeze/monsoon_job.sh              # first job
+sbatch ~/monsoon-breeze/monsoon_job.sh --restart    # each continuation job, until the stop time
+# or chain a continuation behind the first job:
+jid=$(sbatch --parsable ~/monsoon-breeze/monsoon_job.sh)
+sbatch --dependency=afterok:$jid ~/monsoon-breeze/monsoon_job.sh --restart
 ```
 
-```sh
-sbatch monsoon_job.sh                       # first job
-sbatch monsoon_job.sh --restart             # each continuation job, until the stop time is reached
-# or chain them:
-jid=$(sbatch --parsable monsoon_job.sh)
-sbatch --dependency=afterok:$jid monsoon_job.sh --restart
-```
+What the script does:
+- Requests `-p ceoas-gpu`, 1 GPU, 4 CPUs, 64 GB of host memory and 48 h. Edit the `#SBATCH`
+  lines to match step 0, or override at submission, e.g. `sbatch --time=24:00:00 ...` with
+  `WALL_TIME=23h`.
+- Runs `monsoon_convection.jl --arch=gpu --wall_time=$WALL_TIME` (default `47h`). Any
+  arguments after the script name are passed through, e.g. `--restart` or `--stop_time=96h`.
+- Assumes the repository is at `~/monsoon-breeze`; override with `REPO=/other/path sbatch ...`.
+- Logs the node, GPU, Julia version and repository commit at the start of the job.
+- `JULIA_DEPOT_PATH` and `JULIA_CPU_TARGET` lines are commented out in the script. Enable them
+  if you set them when precompiling.
 
 Notes:
-- Keep `--wall_time` about 1 h below `--time`. That leaves room for startup (CUDA kernel
+- Keep `WALL_TIME` about 1 h below `--time`. That leaves room for startup (CUDA kernel
   compilation, lookup tables) and the final checkpoint write.
 - `srun` inside the batch script binds the job step to the allocated GPU. `nvidia-smi` in the
   job's log, or `ssh` to the node, shows usage.
