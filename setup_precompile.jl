@@ -8,7 +8,8 @@
 #   2. lightweight hardware check (preflight.jl); halt if the hardware is missing,
 #      before anything is written or precompiled
 #   3. compare the request with the current `precompile_gpu` preference (LocalPreferences.toml)
-#   4. write the preference only if it changed, then Pkg.precompile()
+#   4. write the preference only if it changed, then precompile (cpu: only what CPU runs
+#      load, never CUDA; gpu: everything)
 #      (a no-op when nothing changed, so an existing cache is never needlessly rebuilt)
 #
 # The `precompile_gpu` preference is read only by MonsoonConvectionCUDAExt, so switching
@@ -51,4 +52,12 @@ CPU:                    $(Sys.CPU_NAME)
 JULIA_CPU_TARGET:       $(get(ENV, "JULIA_CPU_TARGET", "(unset, native)"))
 """)
 
-Pkg.precompile()
+# cpu: precompile only what a CPU run loads. CUDA.jl and MonsoonConvectionCUDAExt are left
+# alone: they are never loaded on CPU, and compiling CUDA can fail on nodes without an NVIDIA
+# driver (e.g. HPC login nodes).
+# gpu: precompile everything, including CUDA and the extension's GPU warm-up run.
+if request == "cpu"
+    Pkg.precompile(["MonsoonConvection", "Oceananigans"])
+else
+    Pkg.precompile()
+end

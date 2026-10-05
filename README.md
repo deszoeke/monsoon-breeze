@@ -227,7 +227,9 @@ srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 curl -sI https://github.com | head -1 
 git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze
 cd ~/monsoon-breeze
 export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional; put this in ~/.bashrc
-julia --project -e 'using Pkg; Pkg.instantiate()'    # downloads the pinned package versions
+# download the pinned package versions; skip Pkg's automatic precompile of everything,
+# which would also compile CUDA.jl (that can fail on a login node without a GPU driver)
+JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
 Use the same Julia version as `Manifest.toml` (1.13.x); juliaup makes this easy.
@@ -382,6 +384,11 @@ section of `MonsoonConvection/src/MonsoonConvection.jl` and does recompile.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
   and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and that nothing
   edits `MonsoonConvection/src`.
+- **`MonsoonConvectionCUDAExt` (or CUDA) fails to precompile on a login/head node**: CUDA.jl
+  can't always be compiled on a node without an NVIDIA driver. `setup_precompile.jl --arch=cpu`
+  therefore precompiles only `MonsoonConvection` and Oceananigans, never CUDA. Use
+  `JULIA_PKG_PRECOMPILE_AUTO=0` with `Pkg.instantiate()` there too, and do the GPU precompile
+  (`--arch=gpu`) on a GPU node. The error is harmless for CPU runs, which never load CUDA.
 - **CUDA out of memory**: the GPU is too small for the full domain (≈ 17 GiB of model state).
   Request a larger GPU type, or reduce `Nx`, `Ny` in the driver.
 - **NetCDF "already exists … Mode will be set to append"** on `--restart`: expected; output
