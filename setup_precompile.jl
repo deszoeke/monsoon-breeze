@@ -61,3 +61,22 @@ if request == "cpu"
 else
     Pkg.precompile()
 end
+
+# Load check: load what a run loads, in a fresh process. Pkg reports a failed extension only
+# as "✗" without the error, and does not fail; loading prints the full error and lets this
+# script exit with an error status.
+load_code = if request == "gpu"
+    """
+    using CUDA, MonsoonConvection
+    Base.get_extension(MonsoonConvection, :MonsoonConvectionCUDAExt) === nothing &&
+        error("MonsoonConvectionCUDAExt failed to load; see the error above")
+    """
+else
+    "using MonsoonConvection"
+end
+
+println("\nLoad check ($request): loading $(request == "gpu" ? "CUDA + MonsoonConvection" : "MonsoonConvection") in a fresh process...")
+load_ok = success(pipeline(`$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e $load_code`;
+                           stdout, stderr))
+println(load_ok ? "Load check: ok" : "Load check: FAILED (error above)")
+load_ok || exit(1)
