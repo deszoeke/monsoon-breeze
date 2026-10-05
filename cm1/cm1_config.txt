@@ -1,0 +1,76 @@
+ 
+   CM1 version: cm1r21.1
+ 
+   nx                        =         1024
+   ny                        =          512
+   nz                        =           65
+ 
+   imoist                    =            1
+   sgsmodel                  =            0
+   tconfig                   =            2
+   bcturbs                   =            2
+   ptype                     =            5
+   wbc                       =            1
+   ebc                       =            1
+   sbc                       =            1
+   nbc                       =            1
+   bbc                       =            3
+   tbc                       =            1
+   iorigin                   =            1
+   axisymm                   =            0
+   iptra                     =            0
+   npt                       =            1
+ 
+   fcor                      =   2.5325249E-05
+ 
+   radopt                    =            2
+   dtrad                     =    300.0000    
+   ctrlat                    =    10.00000    
+   ctrlon                    =    74.00000    
+   year                      =         2009
+   month                     =            6
+   day                       =            1
+   hour                      =            0
+   minute                    =            0
+   second                    =            0
+ 
+   sfcmodel                  =            1
+   oceanmodel                =            1
+   ipbl                      =            2
+ 
+   iice                      =            1
+   idm                       =            1
+   idmplus                   =            0
+   numq                      =           10
+   nql1                      =            2
+   nql2                      =            3
+   nqs1                      =            4
+   nqs2                      =            6
+   nnc1                      =            7
+   nnc2                      =           10
+   nzl1                      =           -2
+   nzl2                      =           -2
+   nvl1                      =           -2
+   nvl2                      =           -2
+ 
+   c_m                       =   0.1000000    
+   c_e1                      =   0.2000017    
+   c_e2                      =   0.7869588    
+   c_s                       =   0.1784124    
+ 
+   cgs1                      =    1.642477    
+   cgs2                      =  -0.8147300    
+   cgs3                      =   0.1722527    
+ 
+   dgs1                      =   -1.422113    
+   dgs2                      =    1.865794    
+   dgs3                      =  -0.4436813    
+ 
+   cgt1                      =    1.875000    
+   cgt2                      =   -1.250000    
+   cgt3                      =   0.3750000    
+ 
+   dgt1                      =    2.000000    
+   dgt2                      =   -3.000000    
+   dgt3                      =    1.000000    
+ 

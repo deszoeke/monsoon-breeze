@@ -1,0 +1,32 @@
+name = "MonsoonConvection"
+uuid = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
+authors = ["Simon de Szoeke <simon.deszoeke@oregonstate.edu>"]
+version = "0.1.0"
+
+[deps]
+Breeze = "660aa2fb-d4c8-4359-a52c-9c057bc511da"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+RRTMGP = "a01a1ee8-cea4-48fc-987c-fc7878d79da1"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+
+[extensions]
+MonsoonConvectionCUDAExt = "CUDA"
+
+[compat]
+Breeze = "0.11.3"
+CUDA = "6"
+NCDatasets = "0.14"
+Oceananigans = "0.113"
+PrecompileTools = "1.2"
+Preferences = "1.4"
+RRTMGP = "1"
+julia = "1.10"

@@ -1,0 +1,31 @@
+# Model output and restart files (write runs outside the repo, or under runs/)
+runs/
+*.nc
+*.jld2
+
+# Machine-specific precompile request (setup_precompile.jl --arch=gpu writes it per machine)
+LocalPreferences.toml
+
+# The top-level Manifest.toml is tracked: it pins package versions for laptop and HPC.
+# A manifest inside the local package would be ignored by the environment anyway.
+MonsoonConvection/Manifest.toml
+
+# Julia coverage / allocation files
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Plots and movies from analysis scripts
+*.png
+*.mp4
+
+# Batch-job logs
+slurm-*.out
+*.log
+
+# OS and editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

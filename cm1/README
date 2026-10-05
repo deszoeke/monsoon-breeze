@@ -1,0 +1,20 @@
+ASdry4800-7200
+
+EKAMSAT Arabian Sea case using June 17 2023 sounding.
+1024 x 512
+10 degree N
+Simplified sounding, linearly interpolating between 1200, 4800, 7200 m.
+Features:
+ * a dry qv=0.3 g/kg layer 4800-7200 m.
+ * -8 m/s at 4800 m simulates strong oberved low-level shear.
+
+
+Adapted from CM1 standard case cpm_RadConvEquil
+Simon de Szoeke
+
+  Cloud Permitting Model (CPM) simulation of Radiative Convective Equilibrium
+  (RCE) following Bretherton et al. (2005, JAS, pg 4273). 
+
+
+  NOTE: no diurnal cycle.  (Solar constant is fixed at 650.83 W/m2)
+

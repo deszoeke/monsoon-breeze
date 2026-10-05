@@ -1,0 +1,9 @@
+[deps]
+Breeze = "660aa2fb-d4c8-4359-a52c-9c057bc511da"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+MonsoonConvection = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
+
+[sources]
+MonsoonConvection = {path = "MonsoonConvection"}
