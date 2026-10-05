@@ -1,16 +1,21 @@
 #!/bin/bash
 # Slurm batch job for the Breeze monsoon-convection run on a GPU node (partition ceoas-gpu).
 #
-# Submit from the run directory (one directory per experiment); output, checkpoints and
-# the Slurm log are written there:
+# Output and checkpoints go to the run directory RUN, by default run/ in the repository
+# (git-ignored). Submit from anywhere; the Slurm log slurm-<jobid>.out is written to the
+# directory you submit from:
 #
-#   mkdir -p /path/to/scratch/monsoon_run1 && cd /path/to/scratch/monsoon_run1
-#   sbatch ~/monsoon-breeze/monsoon_job.sh              # first job
-#   sbatch ~/monsoon-breeze/monsoon_job.sh --restart    # each continuation job
+#   cd ~/monsoon-breeze
+#   sbatch monsoon_job.sh                  # first job
+#   sbatch monsoon_job.sh --restart        # each continuation job
 #
 #   # or chain a continuation behind the first job:
-#   jid=$(sbatch --parsable ~/monsoon-breeze/monsoon_job.sh)
-#   sbatch --dependency=afterok:$jid ~/monsoon-breeze/monsoon_job.sh --restart
+#   jid=$(sbatch --parsable monsoon_job.sh)
+#   sbatch --dependency=afterok:$jid monsoon_job.sh --restart
+#
+# A restart resumes from the latest checkpoint in RUN, so use a separate RUN for each
+# experiment, e.g.  RUN=$HOME/monsoon-breeze/run/sst302 sbatch monsoon_job.sh
+# (On HPC, RUN may also point to a scratch filesystem if the repository's disk is small.)
 #
 # Arguments after the script name are passed to monsoon_convection.jl (e.g. --restart,
 # --stop_time=96h, --float=Float64). See the README, "HPC setup", before the first run:
@@ -31,6 +36,9 @@ set -euo pipefail
 # Repository location (override at submission: REPO=/other/path sbatch monsoon_job.sh)
 REPO=${REPO:-$HOME/monsoon-breeze}
 
+# Run directory for output and checkpoints (one per experiment)
+RUN=${RUN:-$REPO/run}
+
 # Real-time limit for the model: stop and checkpoint about 1 h before the Slurm --time limit,
 # leaving room for startup (CUDA kernel compilation) and the final checkpoint write.
 WALL_TIME=${WALL_TIME:-47h}
@@ -39,7 +47,8 @@ WALL_TIME=${WALL_TIME:-47h}
 # export JULIA_DEPOT_PATH=/path/to/shared/julia_depot
 # export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;znver3,clone_all"
 
-cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p "$RUN"
+cd "$RUN"
 
 echo "job $SLURM_JOB_ID on $(hostname) at $(date)"
 echo "run directory: $PWD"

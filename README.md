@@ -13,7 +13,7 @@ julia --project -e 'using Pkg; Pkg.instantiate()'
 julia --project setup_precompile.jl --arch=cpu
 
 # quick check that everything runs (16 km × 8 km domain, 1 simulated hour, ~3 min):
-mkdir -p runs/small_test && cd runs/small_test
+mkdir -p run/small_test && cd run/small_test
 julia --project=../.. ../../monsoon_convection.jl --small_test
 ```
 
@@ -25,10 +25,11 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `MonsoonConvection/ext/MonsoonConvectionCUDAExt.jl` | GPU warm-up run for precompilation, used only with CUDA. |
 | `setup_precompile.jl` | Requests the hardware to precompile for (`--arch=cpu` or `--arch=gpu`), then precompiles. |
-| `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu` (submit from the run directory). |
+| `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
 | `preflight.jl` | Command-line parsing and the quick hardware check, run before any package loads. |
 | `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
 | `LocalPreferences.toml` | Created by `setup_precompile.jl --arch=gpu`; records the GPU precompile request. |
+| `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
 | `cm1/` | Original CM1 namelist, sounding and log. |
 | `test_checkpoint.jl` | Small 2D Breeze checkpoint/restart example (independent of the above). |
 
@@ -189,7 +190,7 @@ The first run of a fresh install also downloads the radiation and microphysics l
 once per Julia depot.
 
 ```sh
-mkdir -p runs/small_test && cd runs/small_test
+mkdir -p run/small_test && cd run/small_test
 julia --project=../.. ../../monsoon_convection.jl --small_test                       # 1 h
 julia --project=../.. ../../monsoon_convection.jl --small_test --restart --stop_time=1.5h
 ```
@@ -282,18 +283,24 @@ The progress lines show the wall time per 100 steps. Multiply by the expected nu
 
 ### 4. Production runs (batch)
 
-Use the job script [`monsoon_job.sh`](monsoon_job.sh) in the repository. Submit it **from the
-run directory** (one per experiment). Output, checkpoints and the Slurm log `slurm-<jobid>.out`
-are written there:
+Use the job script [`monsoon_job.sh`](monsoon_job.sh) in the repository. Output and
+checkpoints go to the run directory `RUN`, by default `run/` in the repository (git-ignored).
+The Slurm log `slurm-<jobid>.out` goes to the directory you submit from:
 
 ```sh
-mkdir -p /path/to/scratch/monsoon_run1 && cd /path/to/scratch/monsoon_run1
-sbatch ~/monsoon-breeze/monsoon_job.sh              # first job
-sbatch ~/monsoon-breeze/monsoon_job.sh --restart    # each continuation job, until the stop time
+cd ~/monsoon-breeze
+sbatch monsoon_job.sh                   # first job
+sbatch monsoon_job.sh --restart         # each continuation job, until the stop time
 # or chain a continuation behind the first job:
-jid=$(sbatch --parsable ~/monsoon-breeze/monsoon_job.sh)
-sbatch --dependency=afterok:$jid ~/monsoon-breeze/monsoon_job.sh --restart
+jid=$(sbatch --parsable monsoon_job.sh)
+sbatch --dependency=afterok:$jid monsoon_job.sh --restart
+
+# a second experiment in its own run directory:
+RUN=$HOME/monsoon-breeze/run/sst302 sbatch monsoon_job.sh
 ```
+
+A restart resumes from the latest checkpoint in `RUN`, so give each experiment its own `RUN`.
+On HPC, `RUN` can also point to a scratch filesystem if the repository's disk is small.
 
 What the script does:
 - Requests `-p ceoas-gpu`, 1 GPU, 4 CPUs, 64 GB of host memory and 48 h. Edit the `#SBATCH`
@@ -302,6 +309,7 @@ What the script does:
 - Runs `monsoon_convection.jl --arch=gpu --wall_time=$WALL_TIME` (default `47h`). Any
   arguments after the script name are passed through, e.g. `--restart` or `--stop_time=96h`.
 - Assumes the repository is at `~/monsoon-breeze`; override with `REPO=/other/path sbatch ...`.
+  The run directory defaults to `$REPO/run`; override with `RUN=...`.
 - Logs the node, GPU, Julia version and repository commit at the start of the job.
 - `JULIA_DEPOT_PATH` and `JULIA_CPU_TARGET` lines are commented out in the script. Enable them
   if you set them when precompiling.

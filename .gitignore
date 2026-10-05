@@ -1,5 +1,5 @@
-# Model output and restart files (write runs outside the repo, or under runs/)
-runs/
+# Local run directory for model output and checkpoints (monsoon_job.sh default)
+/run/
 *.nc
 *.jld2
 
