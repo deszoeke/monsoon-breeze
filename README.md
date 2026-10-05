@@ -31,6 +31,51 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `cm1/` | Original CM1 namelist, sounding and log. |
 | `test_checkpoint.jl` | Small 2D Breeze checkpoint/restart example (independent of the above). |
 
+## Model domain and resources
+
+| | Full run | `--small_test` |
+|---|---|---|
+| Columns (Nx × Ny) | 1024 × 512 | 32 × 16 |
+| Horizontal extent | 512 km × 256 km, Δx = Δy = 500 m | 16 km × 8 km |
+| Vertical | 65 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, then 500 m (identical to CM1 `zf`) | same |
+| Grid cells | 34.1 million | 33,280 |
+| Boundaries | periodic in x and y; rigid lid with a sponge above 20 km | same |
+| Rotation | f-plane, f = 2.53 × 10⁻⁵ s⁻¹ (10°N) | same |
+| Simulated time | 345,700 s ≈ 4 days (CM1 `timax`) | 1 h |
+| Time step | adaptive, CFL 0.7, at most 15 s (≈ 8 s in the 1 h tests, before deep convection) | same |
+| Time steps | roughly 25,000–45,000 | ≈ 570 |
+
+**Memory.** The model plus simulation state takes about 111 Float32 3D arrays, about 444 bytes
+per grid cell including halos. This was measured with `Base.summarysize` at 32×16 and 64×64 and
+extrapolated linearly:
+
+| Configuration | Model state |
+|---|---|
+| Full run, Float32 (GPU default) | **≈ 17 GiB** of GPU memory |
+| Full run, Float64 | ≈ 34 GiB |
+| `--small_test`, Float32 (measured) | ≈ 54 MiB |
+
+Allow headroom for the CUDA context and temporary arrays. A GPU with **at least 24 GB** should
+be enough, and 40–80 GB (A100, H100, L40S) is comfortable. A 16 GB GPU will not hold the full
+domain.
+
+These are estimates; check them with `nvidia-smi` during the first GPU run. Host memory needs
+are modest. Output is copied to the host before writing (≈ 2 GB per 3D snapshot), so 32–64 GB
+of host RAM is ample.
+
+**Disk** (estimates for the full run; one run directory per experiment):
+
+| File | Size |
+|---|---|
+| `_fields.nc`: 14 variables × 34.1 M cells × 4 B per daily snapshot, 5 snapshots | ≈ 2 GB each, ≈ 10 GB total |
+| `_surface.nc`: hourly, about 96 snapshots | ≈ 3 GB |
+| `_profiles.nc` | < 10 MB |
+| Checkpoint (JLD2, only the latest kept) | a few GB |
+
+**Wall-clock time.** GPU throughput for this configuration hasn't been measured yet. On a
+laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size GPU run first
+(see "First GPU test" below) to choose `--wall_time` and the job's `--time`.
+
 ## Running the model
 
 ```sh
@@ -148,35 +193,68 @@ julia --project=../.. ../../monsoon_convection.jl --small_test                  
 julia --project=../.. ../../monsoon_convection.jl --small_test --restart --stop_time=1.5h
 ```
 
-## HPC setup (GPU with CUDA)
+## HPC setup (GPU with CUDA, Slurm partition `ceoas-gpu`)
 
-### 1. Environment and Julia depot
+Commands assume the repository is cloned to `~/monsoon-breeze` and runs go in a scratch
+directory. Replace paths as needed.
 
-Copy or clone this directory to the cluster. `Manifest.toml` pins the same package versions as
-on the PC. Instantiate on a **login node**; this only downloads packages:
+### 0. Inspect the partition (once)
+
+GPU request syntax, GPU types and limits differ between clusters, so check before writing jobs:
 
 ```sh
-cd /path/to/breeze
-export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional: a depot on a shared filesystem
-julia --project -e 'using Pkg; Pkg.instantiate()'
+sinfo -p ceoas-gpu -o "%P %a %l %D %c %m %G"   # time limit, nodes, CPUs, memory, GPUs (GRES)
+scontrol show partition ceoas-gpu               # defaults and limits
+srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 lscpu | grep "Model name"
+srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 curl -sI https://github.com | head -1   # internet on compute nodes?
 ```
 
-**CPU type.** Compile caches are keyed by CPU type. If the login and compute nodes have
-different CPUs but share the depot, set a multi-target `JULIA_CPU_TARGET` in your shell profile
-*before* precompiling, so one cache serves every node type. Adjust the targets to your
-cluster's CPUs:
+- Use a GPU with at least 24 GB of memory (see "Model domain and resources"). If the partition
+  mixes GPU types, request one explicitly, e.g. `--gres=gpu:a100:1`. The type names are shown
+  in the `%G` column of `sinfo`.
+- Some clusters use `--gpus=1` instead of `--gres=gpu:1`.
+- **No internet on compute nodes?** Then do the first precompile (step 2a) on a login node. It
+  downloads the radiation and microphysics lookup tables. CUDA.jl's own runtime libraries are
+  normally fetched when CUDA is first loaded; if that fails on a compute node, see the CUDA.jl
+  documentation on `CUDA.set_runtime_version!`.
+
+### 1. Environment and Julia depot (login node)
+
+```sh
+git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze
+cd ~/monsoon-breeze
+export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional; put this in ~/.bashrc
+julia --project -e 'using Pkg; Pkg.instantiate()'    # downloads the pinned package versions
+```
+
+Use the same Julia version as `Manifest.toml` (1.13.x); juliaup makes this easy.
+
+**CPU type.** Compile caches are keyed by CPU type. If the login node and the `ceoas-gpu` nodes
+have different CPUs (compare `lscpu` output) but share the depot, set a multi-target
+`JULIA_CPU_TARGET` in `~/.bashrc` *before* precompiling, so one cache serves both. Adjust the
+targets to the CPUs you found:
 
 ```sh
 export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;znver3,clone_all"
 ```
 
-Otherwise, always precompile on the same kind of node you run on.
+Otherwise, always precompile on a `ceoas-gpu` node.
 
-### 2. Precompile on a GPU node
+### 2. Precompile
 
-Run the setup **on a GPU compute node** (interactive or batch):
+a) Optional, on the login node, which also downloads the lookup tables:
 
 ```sh
+julia --project setup_precompile.jl --arch=cpu
+```
+
+b) On a GPU node, in an interactive session:
+
+```sh
+srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l
+cd ~/monsoon-breeze
+nvidia-smi                                         # confirm the GPU is visible
 julia --project setup_precompile.jl --arch=gpu
 ```
 
@@ -187,30 +265,62 @@ julia --project setup_precompile.jl --arch=gpu
 - To go back to CPU-only precompilation, run `setup_precompile.jl --arch=cpu`. This rebuilds
   only the CUDA extension.
 
-### 3. Run
+### 3. First GPU test (interactive)
 
-A batch job looks like this. Fill in your cluster's partition, account, GPU request and modules:
+In the same `srun` session, check that the GPU path works and measure throughput:
+
+```sh
+mkdir -p /path/to/scratch/monsoon_gputest && cd /path/to/scratch/monsoon_gputest
+julia --project=$HOME/monsoon-breeze $HOME/monsoon-breeze/monsoon_convection.jl --arch=gpu --small_test
+# full domain for 1 simulated hour: check memory (nvidia-smi in a second shell) and s/step
+julia --project=$HOME/monsoon-breeze $HOME/monsoon-breeze/monsoon_convection.jl --arch=gpu --stop_time=1h 2>&1 | tee gpu_1h.log
+```
+
+The progress lines show the wall time per 100 steps. Multiply by the expected number of steps
+(25,000–45,000) to estimate the length of the full run.
+
+### 4. Production runs (batch)
+
+`monsoon_job.sh`:
 
 ```sh
 #!/bin/bash
 #SBATCH --job-name=monsoon
-#SBATCH --partition=<gpu-partition>
-#SBATCH --gres=gpu:1
+#SBATCH --partition=ceoas-gpu
+#SBATCH --gres=gpu:1               # or --gres=gpu:<type>:1, or --gpus=1 (see step 0)
 #SBATCH --cpus-per-task=4
-#SBATCH --time=48:00:00
+#SBATCH --mem=64G                  # host memory; output is staged on the host
+#SBATCH --time=48:00:00            # within the partition limit (sinfo %l)
+#SBATCH --output=slurm-%j.out
 
-module load julia            # or put juliaup's julia on PATH
 export JULIA_DEPOT_PATH=/path/to/shared/julia_depot
-# export JULIA_CPU_TARGET=...   # same value used when precompiling
+# export JULIA_CPU_TARGET="..."    # same value used when precompiling
 
-BREEZE=/path/to/breeze
-cd /path/to/scratch/monsoon_run1          # one directory per experiment
+REPO=$HOME/monsoon-breeze
+RUN=/path/to/scratch/monsoon_run1          # one directory per experiment
+mkdir -p $RUN && cd $RUN
 
-# first job:
-julia --project=$BREEZE $BREEZE/monsoon_convection.jl --arch=gpu --wall_time=47h
-# continuation jobs (same --stop_time, if one was given):
-# julia --project=$BREEZE $BREEZE/monsoon_convection.jl --arch=gpu --restart --wall_time=47h
+# Stop 1 h before the Slurm limit so the run checkpoints cleanly.
+# Pass --restart for continuation jobs: sbatch monsoon_job.sh --restart
+srun julia --project=$REPO $REPO/monsoon_convection.jl --arch=gpu --wall_time=47h "$@"
 ```
+
+```sh
+sbatch monsoon_job.sh                       # first job
+sbatch monsoon_job.sh --restart             # each continuation job, until the stop time is reached
+# or chain them:
+jid=$(sbatch --parsable monsoon_job.sh)
+sbatch --dependency=afterok:$jid monsoon_job.sh --restart
+```
+
+Notes:
+- Keep `--wall_time` about 1 h below `--time`. That leaves room for startup (CUDA kernel
+  compilation, lookup tables) and the final checkpoint write.
+- `srun` inside the batch script binds the job step to the allocated GPU. `nvidia-smi` in the
+  job's log, or `ssh` to the node, shows usage.
+- A continuation job must run in the same run directory and with the same `--stop_time` (if
+  one was given). Output is appended to the existing NetCDF files.
+- The log ends with "Reached stop time …" or "Wall-time limit reached … Continue with --restart".
 
 **What the cache does not cover on GPU.** The precompile cache covers the CPU-side work:
 model construction, initialization, output setup and kernel launch code. The CUDA kernels
@@ -271,6 +381,8 @@ section of `MonsoonConvection/src/MonsoonConvection.jl` and does recompile.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
   and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and that nothing
   edits `MonsoonConvection/src`.
+- **CUDA out of memory**: the GPU is too small for the full domain (≈ 17 GiB of model state).
+  Request a larger GPU type, or reduce `Nx`, `Ny` in the driver.
 - **NetCDF "already exists … Mode will be set to append"** on `--restart`: expected; output
   continues in the same files.
 - **`test_checkpoint.jl`** needs CairoMakie and UnicodePlots, which aren't in this
