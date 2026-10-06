@@ -3,7 +3,8 @@
 #     julia --project setup_precompile.jl
 #
 # Run after installing, `git pull`, package updates or edits to MonsoonConvection/src.
-# Needs ~6 GB of memory: on HPC run it on a GPU node (srun ... --mem=32G), not the login node.
+# Needs ~6 GB of memory: on HPC submit `sbatch precompile_job.sh` (or run it in an srun session
+# with --mem=32G), not on the login node.
 # It never compiles CUDA, and ends with a load check in a fresh process that sets the exit
 # status (Pkg can report a failure as "✗" and still succeed).
 

@@ -24,6 +24,7 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
+| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on an A100 node with enough memory (the login node runs out). |
 | `check_gpu.jl` | Staged check that a GPU node can run the model (CUDA, GPU context, model steps on the GPU); `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
 | `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
@@ -288,8 +289,17 @@ the memory needed to precompile.
 
 ### 2. Set up and check a GPU node (interactive)
 
-All compiling happens here: the GPU node has the NVIDIA driver and enough memory (precompiling
-needs about 6 GB, more than a login node usually allows).
+All compiling happens on a compute node, which has the NVIDIA driver and enough memory.
+Precompiling needs about 6 GB, more than the login node allows.
+
+**Precompile as a batch job** (simplest), from the repository directory on the login node:
+
+```sh
+cd /ceoas/deszoeks/projects/monsoon-breeze
+sbatch precompile_job.sh          # A100 node, 32 GB, ≈ 5 min; log in slurm-precompile-<jobid>.out
+```
+
+The log ends with `Load check: ok`. Then check the GPU interactively:
 
 ```sh
 srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l
@@ -297,7 +307,7 @@ cd ~/monsoon-breeze
 nvidia-smi                                  # your GPU: ~0 MiB used, no other processes
 echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES  # set inside a GPU allocation
 
-julia --project setup_precompile.jl         # CPU warm-up + load check (≈ 3–5 min)
+julia --project setup_precompile.jl         # (or this, if you skipped the batch job)
 julia --project check_gpu.jl                # CUDA, GPU context, model compiles and steps on the GPU
 julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-min end-to-end run
 ```
@@ -315,7 +325,8 @@ julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-
 - **Stage 2 fails, "the GPU is busy or not allocated to you":** see Troubleshooting ("Out of GPU
   memory" while creating a context).
 
-Rerun `setup_precompile.jl` and `check_gpu.jl` after every `git pull` or package update.
+Rerun the precompile (`sbatch precompile_job.sh`) and `check_gpu.jl` after every `git pull` that
+changes `MonsoonConvection/src`, and after package updates.
 
 ### 3. Measure throughput (interactive, optional)
 
