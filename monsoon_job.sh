@@ -24,7 +24,10 @@
 
 #SBATCH --job-name=monsoon
 #SBATCH --partition=ceoas-gpu
-#SBATCH --gres=gpu:a100:1          # A100 80 GB; ceoas-gpu also has GTX 1080 Ti nodes (11 GB, too small)
+#SBATCH --gres=gpu:a100:2          # A100 80 GB (ceoas-gpu also has GTX 1080 Ti nodes: 11 GB, too small).
+                                   # TEMPORARY: 2 GPUs, the run uses one (see USE_GPU below), because
+                                   # Slurm keeps assigning aerosmith GPU 2, which a job that did not
+                                   # request a GPU is using. Back to gpu:a100:1 once that is resolved.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G                  # host memory; output is staged on the host before writing
 #SBATCH --time=48:00:00            # within the partition limit (sinfo -p ceoas-gpu -o %l)
@@ -47,6 +50,14 @@ WALL_TIME=${WALL_TIME:-47h}
 #   JULIA=$HOME/.juliaup/bin/julia sbatch monsoon_job.sh
 JULIA=${JULIA:-julia}
 
+# Which of the allocated GPUs to run on:
+#   USE_GPU=idle (default)  the first allocated GPU with < 1 GiB in use
+#   USE_GPU=3               that GPU (must be one Slurm allocated to this job), e.g.
+#                           USE_GPU=3 sbatch monsoon_job.sh
+# The job stops before starting the model if the chosen GPU is busy or not allocated.
+# (On this cluster CUDA_VISIBLE_DEVICES holds the node's physical GPU indices, as nvidia-smi.)
+USE_GPU=${USE_GPU:-idle}
+
 # Julia environment: use the same values as when precompiling (see README), e.g.
 # export JULIA_DEPOT_PATH=/path/to/shared/julia_depot
 # export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;znver3,clone_all"
@@ -58,8 +69,28 @@ echo "job $SLURM_JOB_ID on $(hostname) at $(date)"
 echo "run directory: $PWD"
 echo "repository:    $REPO ($(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'not a git checkout'))"
 echo "arguments:     --arch=gpu --wall_time=$WALL_TIME $*"
-echo "allocated GPU: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 nvidia-smi --query-gpu=index,name,memory.used,memory.total,driver_version --format=csv
+
+# Choose one of the allocated GPUs (see USE_GPU above).
+allocated=${CUDA_VISIBLE_DEVICES:-}
+echo "allocated GPUs: ${allocated:-none}"
+[ -n "$allocated" ] || { echo "ERROR: no GPU allocated to this job (CUDA_VISIBLE_DEVICES unset)" >&2; exit 1; }
+used_mib() { nvidia-smi -i "$1" --query-gpu=memory.used --format=csv,noheader,nounits | tr -d ' '; }
+if [ "$USE_GPU" = "idle" ]; then
+    gpu=""
+    for g in ${allocated//,/ }; do
+        if [ "$(used_mib "$g")" -lt 1024 ]; then gpu=$g; break; fi
+    done
+    [ -n "$gpu" ] || { echo "ERROR: all allocated GPUs ($allocated) are busy; nothing was run" >&2; exit 1; }
+else
+    case ",$allocated," in
+        *",$USE_GPU,"*) gpu=$USE_GPU ;;
+        *) echo "ERROR: USE_GPU=$USE_GPU is not among the allocated GPUs ($allocated)" >&2; exit 1 ;;
+    esac
+    [ "$(used_mib "$gpu")" -lt 1024 ] || { echo "ERROR: GPU $gpu is busy ($(used_mib "$gpu") MiB in use); nothing was run" >&2; exit 1; }
+fi
+export CUDA_VISIBLE_DEVICES=$gpu
+echo "running on GPU: $gpu ($(used_mib "$gpu") MiB in use before start)"
 
 # Stop early if this Julia is not the version in Manifest.toml (wrong julia on PATH).
 want=$(sed -n 's/^julia_version = "\([0-9]*\.[0-9]*\).*/\1/p' "$REPO/Manifest.toml")

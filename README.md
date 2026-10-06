@@ -313,6 +313,12 @@ What the script does:
   11 GB is too small for the full domain and which the CUDA 13 runtime no longer supports. Edit the `#SBATCH`
   lines to match step 0, or override at submission, e.g. `sbatch --time=24:00:00 ...` with
   `WALL_TIME=23h`.
+- **Temporarily requests two A100s and runs on one** (`--gres=gpu:a100:2`). Slurm keeps assigning
+  aerosmith's GPU 2, which another user's job is using without having requested a GPU. The
+  script runs on the first allocated GPU that's idle (`USE_GPU=idle`, the default), or on the
+  one you name, e.g. `USE_GPU=3 sbatch monsoon_job.sh`. It stops before starting the model if
+  that GPU is busy or not allocated to the job. Once GPU 2 is free again, change the request
+  back to `--gres=gpu:a100:1`.
 - Runs `monsoon_convection.jl --arch=gpu --wall_time=$WALL_TIME` (default `47h`). Any
   arguments after the script name are passed through, e.g. `--restart` or `--stop_time=96h`.
 - Assumes the repository is at `/ceoas/deszoeks/projects/monsoon-breeze`; override with
