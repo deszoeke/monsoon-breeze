@@ -308,22 +308,31 @@ A restart resumes from the latest checkpoint in `RUN`, so give each experiment i
 On HPC, `RUN` can also point to a scratch filesystem if the repository's disk is small.
 
 What the script does:
-- Requests `-p ceoas-gpu`, 1 GPU, 4 CPUs, 64 GB of host memory and 48 h. Edit the `#SBATCH`
+- Requests `-p ceoas-gpu`, one **A100** (`--gres=gpu:a100:1`), 4 CPUs, 64 GB of host memory and
+  48 h. The A100 type matters: `ceoas-gpu` also has GTX 1080 Ti nodes (e.g. ayaya05), whose
+  11 GB is too small for the full domain and which the CUDA 13 runtime no longer supports. Edit the `#SBATCH`
   lines to match step 0, or override at submission, e.g. `sbatch --time=24:00:00 ...` with
   `WALL_TIME=23h`.
 - Runs `monsoon_convection.jl --arch=gpu --wall_time=$WALL_TIME` (default `47h`). Any
   arguments after the script name are passed through, e.g. `--restart` or `--stop_time=96h`.
-- Assumes the repository is at `~/monsoon-breeze`; override with `REPO=/other/path sbatch ...`.
+- Assumes the repository is at `/ceoas/deszoeks/projects/monsoon-breeze`; override with
+  `REPO=/other/path sbatch ...`.
   The run directory defaults to `$REPO/run`; override with `RUN=...`.
-- Logs the node, GPU, Julia version and repository commit at the start of the job.
+- Logs the node, the allocated GPU, the Julia version and the repository commit at the start of
+  the job.
+- Stops at once if `julia` is not the version in `Manifest.toml` (1.13). Batch jobs can find a
+  different `julia` on `PATH`, e.g. a system 1.10. Point it at the right one with
+  `JULIA=$HOME/.juliaup/bin/julia sbatch monsoon_job.sh`.
 - `JULIA_DEPOT_PATH` and `JULIA_CPU_TARGET` lines are commented out in the script. Enable them
   if you set them when precompiling.
 
 Notes:
 - Keep `WALL_TIME` about 1 h below `--time`. That leaves room for startup (CUDA kernel
   compilation, lookup tables) and the final checkpoint write.
-- `srun` inside the batch script binds the job step to the allocated GPU. `nvidia-smi` in the
-  job's log, or `ssh` to the node, shows usage.
+- **Submit from the login node,** not from inside an interactive `srun` session. A job
+  submitted from inside an allocation inherits that allocation's Slurm settings. (The script
+  runs Julia directly, without `srun`, so the inherited CPU binding no longer breaks it.)
+- `nvidia-smi` in the job's log, or `ssh` to the node, shows GPU usage.
 - A continuation job must run in the same run directory and with the same `--stop_time` (if
   one was given). Output is appended to the existing NetCDF files.
 - The log ends with "Reached stop time …" or "Wall-time limit reached … Continue with --restart".
