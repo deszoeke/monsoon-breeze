@@ -84,43 +84,39 @@
 #                   package updates, a new CPU type
 # ──────────────────────────────────────────────────────────────────────────────────────
 
-include(joinpath(@__DIR__, "preflight.jl"))
+include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 
-# Validate every flag, and check the requested hardware, before loading any package
-# (and its compile cache), so that mistakes fail in seconds with a short message.
-settings = try
+# Check the flags and the requested hardware before loading any package, so mistakes fail fast.
+flags = try
     flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time"))
-
-    small_test = parse_bool("small_test", get(flags, "small_test", "false"))
-    restart    = parse_bool("restart", get(flags, "restart", "false"))
-
-    stop_time = haskey(flags, "stop_time") ? parse_duration("stop_time", flags["stop_time"]) :
-                small_test ? 3600.0 : 345700.0                  # seconds; CM1 timax
-    wall_time_limit = haskey(flags, "wall_time") ? parse_duration("wall_time", flags["wall_time"]) : Inf
-
-    arch_request = lowercase(get(flags, "arch", "cpu"))
-    float_type = get(flags, "float", arch_request == "gpu" ? "Float32" : "Float64")
-    float_type in ("Float32", "Float64") || error("--float must be Float32 or Float64, got \"$float_type\"")
-
-    check_requested_architecture(arch_request)
-
-    (; small_test, restart, stop_time, wall_time_limit, arch_request, float_type)
+    for name in ("small_test", "restart")
+        get(flags, name, "true") == "true" || error("--$name takes no value")
+    end
+    get(flags, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
+    get(flags, "float", "Float32") in ("Float32", "Float64") || error("--float must be Float32 or Float64")
+    haskey(flags, "stop_time") && parse_duration(flags["stop_time"])
+    haskey(flags, "wall_time") && parse_duration(flags["wall_time"])
+    get(flags, "arch", "cpu") == "gpu" && require_gpu()
+    flags
 catch err
-    println(stderr, "ERROR: ", sprint(showerror, err))
-    println(stderr, "Usage: see the header of monsoon_convection.jl")
+    println(stderr, "ERROR: ", sprint(showerror, err), "\nUsage: see the header of monsoon_convection.jl")
     exit(1)
 end
 
-(; small_test, restart, stop_time, wall_time_limit, arch_request, float_type) = settings
+on_gpu     = get(flags, "arch", "cpu") == "gpu"
+small_test = haskey(flags, "small_test")
+restart    = haskey(flags, "restart")
+stop_time  = haskey(flags, "stop_time") ? parse_duration(flags["stop_time"]) : small_test ? 3600.0 : 345700.0  # s; CM1 timax
+wall_time_limit = haskey(flags, "wall_time") ? parse_duration(flags["wall_time"]) : Inf
 
 using Oceananigans
 using Oceananigans.Units
 
-Oceananigans.defaults.FloatType = float_type == "Float32" ? Float32 : Float64
+Oceananigans.defaults.FloatType = get(flags, "float", on_gpu ? "Float32" : "Float64") == "Float32" ? Float32 : Float64
 
 using MonsoonConvection
 
-arch = arch_request == "gpu" ? GPU() : CPU()
+arch = on_gpu ? GPU() : CPU()
 
 #####
 ##### Experiment: sounding and grid

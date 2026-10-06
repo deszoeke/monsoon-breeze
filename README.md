@@ -24,14 +24,13 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
-| `check_gpu.jl` | Staged check that a GPU node can run the model: CUDA, GPU context, model compiles and steps on the GPU; `--smoke_test` adds a 10-min run. |
+| `check_gpu.jl` | Staged check that a GPU node can run the model (CUDA, GPU context, model steps on the GPU); `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
-| `preflight.jl` | Command-line parsing and the quick hardware check, run before any package loads. |
+| `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
 | `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
 | `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
 | `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
 | `cm1/` | Original CM1 namelist, sounding and log. |
-| `test_checkpoint.jl` | Small 2D Breeze checkpoint/restart example (independent of the above). |
 
 ## Model domain and resources
 
@@ -256,22 +255,22 @@ nvidia-smi                                  # your GPU: ~0 MiB used, no other pr
 echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES  # set inside a GPU allocation
 
 julia --project setup_precompile.jl         # CPU warm-up + load check (≈ 3–5 min)
-julia --project check_gpu.jl                # stages 1–2: CUDA, GPU context, model compiles and steps
+julia --project check_gpu.jl                # CUDA, GPU context, model compiles and steps on the GPU
 julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-min end-to-end run
 ```
 
 `check_gpu.jl` prints PASS/FAIL per stage and stops at the first failure with the real error.
 
-- **Stage 1a fails with "CUDA.functional() is false":** the message gives the fix, which is to
-  pin the CUDA runtime to the driver's version, e.g.
+- **Stage 1 fails with "CUDA is not functional":** the message gives the fix, which is to pin
+  the CUDA runtime to the driver's version, e.g.
 
   ```sh
   julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.8")'   # version from nvidia-smi
   ```
 
   The pin is stored in `LocalPreferences.toml`, which is per machine and git-ignored.
-- **Stage 1b fails with "could not create a CUDA context":** the GPU is busy or not allocated
-  to your shell. See Troubleshooting.
+- **Stage 2 fails, "the GPU is busy or not allocated to you":** see Troubleshooting ("Out of GPU
+  memory" while creating a context).
 
 Rerun `setup_precompile.jl` and `check_gpu.jl` after every `git pull` or package update.
 
@@ -381,7 +380,7 @@ These are the failures met while setting up the cluster, with causes and fixes:
 - **"GPU requested, but no NVIDIA GPU was found"**: you're on a node without a GPU (e.g. the
   login node). Move to a GPU allocation (`srun ... --gres=gpu:1`) or use `--arch=cpu`. Nothing
   was changed.
-- **"CUDA.functional() is false"** (or "CUDA.jl could not find an appropriate CUDA runtime"): CUDA's
+- **"CUDA is not functional"** (or "CUDA.jl could not find an appropriate CUDA runtime"): CUDA's
   runtime package was compiled on a node without a driver (the login node) and recorded "no
   runtime". Pin the runtime version on the GPU node as `check_gpu.jl` instructs. Avoid it in
   future by never precompiling on the login node; install there with
@@ -405,5 +404,3 @@ These are the failures met while setting up the cluster, with causes and fixes:
   version; nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
 - **NetCDF "already exists … Mode will be set to append"** on `--restart`: expected; output
   continues in the same files.
-- **`test_checkpoint.jl`** needs CairoMakie and UnicodePlots, which aren't in this
-  environment. Run it with its own environment.
