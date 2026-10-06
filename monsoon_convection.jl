@@ -51,6 +51,8 @@
 #   --wall_time=47h       real (wall-clock) time limit for this job. The run stops cleanly
 #                         and writes a checkpoint; continue it with --restart. Set it a
 #                         little below the batch job's time limit. Default: none.
+#   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
+#                         in any prognostic field, reporting the field and grid location.
 #
 # Examples
 #   julia --project monsoon_convection.jl --small_test
@@ -88,8 +90,8 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 
 # Check the flags and the requested hardware before loading any package, so mistakes fail fast.
 flags = try
-    flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time"))
-    for name in ("small_test", "restart")
+    flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan"))
+    for name in ("small_test", "restart", "debug_nan")
         get(flags, name, "true") == "true" || error("--$name takes no value")
     end
     get(flags, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
@@ -185,5 +187,55 @@ simulation = build_simulation(model; stop_time, wall_time_limit, small_test, res
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
 restart && restore_latest_checkpoint!(simulation)
+
+#####
+##### --debug_nan: every 10 iterations, print field extremes and stop at the first NaN/Inf in any
+##### prognostic field, reporting where it is (for diagnosing blow-ups)
+#####
+
+using Printf
+using Oceananigans: prognostic_fields
+using Oceananigans.Grids: znodes
+
+if haskey(flags, "debug_nan")
+    # A NaN reaches every prognostic field within one step (through the pressure solve), so
+    # prognostic fields can't show where it started. Diagnostic fields (temperature, P3
+    # diagnostics and fall speeds, TKE diffusivities, radiative heating) are computed from the
+    # state each step and feed the next one: a NaN produced by one of them shows up there first,
+    # localized. So check everything every iteration, and list each field with bad points.
+    m = simulation.model
+    μ = m.microphysical_fields
+    checked_fields = merge(prognostic_fields(m),
+                           (; T = m.temperature, Fᴿ = m.radiation.flux_divergence),
+                           NamedTuple(n => getproperty(m.closure_fields, n) for n in (:Kᵘ, :Kᶜ, :Kᵉ)),
+                           NamedTuple(n => μ[n] for n in keys(μ) if !startswith(string(n), "ρ") && μ[n] isa Field))
+
+    function debug_nan(sim)
+        if iteration(sim) % 10 == 0
+            @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, T ∈ [%.1f, %.1f], max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g\n",
+                    iteration(sim), prettytime(sim), sim.Δt, maximum(abs, m.velocities.w), minimum(m.temperature),
+                    maximum(m.temperature), 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ),
+                    maximum(m.closure_fields.Kᵘ))
+        end
+        all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
+
+        println("NaN/Inf at iteration $(iteration(sim)), t = $(prettytime(sim)), Δt = $(sim.Δt). Fields, fewest bad points first:")
+        reports = []
+        for (name, field) in pairs(checked_fields)
+            bad = findall(!isfinite, Array(interior(field)))
+            isempty(bad) || push!(reports, (name, field, bad))
+        end
+        for (name, field, bad) in sort(reports; by = r -> length(r[3]))
+            i, j, k = Tuple(first(bad))
+            ks = sort(unique(getindex.(Tuple.(bad), 3)))
+            @printf("  %-6s %8d points; first (i, j, k) = (%d, %d, %d) at z = %.0f m; levels k = %s\n",
+                    name, length(bad), i, j, k, Array(znodes(field))[k],
+                    length(ks) > 12 ? "$(first(ks))–$(last(ks)) ($(length(ks)) levels)" : string(ks))
+        end
+        error("stopping at first NaN/Inf")
+    end
+
+    add_callback!(simulation, debug_nan, IterationInterval(1))
+end
 
 run_simulation!(simulation)
