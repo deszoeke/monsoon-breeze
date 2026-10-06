@@ -2,7 +2,7 @@
 
 julia_version = "1.13.1"
 manifest_format = "2.1"
-project_hash = "67c27a5342049cf6a3e4a13da564624fe1912a92"
+project_hash = "4141cbd318dbeecd7bd3299ae8f22a373c18f1df"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -731,14 +731,10 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 version = "1.11.0"
 
 [[deps.MonsoonConvection]]
-deps = ["Breeze", "Logging", "NCDatasets", "Oceananigans", "PrecompileTools", "Preferences", "Printf", "RRTMGP", "Random", "Statistics"]
+deps = ["Breeze", "Logging", "NCDatasets", "Oceananigans", "PrecompileTools", "Printf", "RRTMGP", "Random", "Statistics"]
 path = "MonsoonConvection"
 uuid = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
 version = "0.1.0"
-weakdeps = ["CUDA"]
-
-    [deps.MonsoonConvection.extensions]
-    MonsoonConvectionCUDAExt = "CUDA"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"

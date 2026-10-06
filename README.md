@@ -10,7 +10,7 @@ CM1 namelist option maps to Breeze.
 ```sh
 # laptop (CPU), once:
 julia --project -e 'using Pkg; Pkg.instantiate()'
-julia --project setup_precompile.jl --arch=cpu
+julia --project setup_precompile.jl
 
 # quick check that everything runs (16 km × 8 km domain, 1 simulated hour, ~3 min):
 mkdir -p run/small_test && cd run/small_test
@@ -23,12 +23,12 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 |---|---|
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
-| `MonsoonConvection/ext/MonsoonConvectionCUDAExt.jl` | GPU warm-up run for precompilation, used only with CUDA. |
-| `setup_precompile.jl` | Requests the hardware to precompile for (`--arch=cpu` or `--arch=gpu`), then precompiles. |
+| `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
+| `check_gpu.jl` | Staged check that a GPU node can run the model: CUDA, GPU context, model compiles and steps on the GPU; `--smoke_test` adds a 10-min run. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
 | `preflight.jl` | Command-line parsing and the quick hardware check, run before any package loads. |
 | `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
-| `LocalPreferences.toml` | Created by `setup_precompile.jl --arch=gpu`; records the GPU precompile request. |
+| `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
 | `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
 | `cm1/` | Original CM1 namelist, sounding and log. |
 | `test_checkpoint.jl` | Small 2D Breeze checkpoint/restart example (independent of the above). |
@@ -87,7 +87,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | Flag | Default | Meaning |
 |---|---|---|
 | `--arch=cpu\|gpu` | `cpu` | Hardware to run on. A `gpu` request is checked (NVIDIA device present, CUDA working) before any package loads; if unavailable the run stops immediately and nothing is changed. |
-| `--float=Float32\|Float64` | Float32 on GPU, Float64 on CPU | Floating-point precision. Single precision is standard for GPU runs of this kind; the precompile warm-up covers only these defaults. |
+| `--float=Float32\|Float64` | Float32 on GPU, Float64 on CPU | Floating-point precision. Single precision is standard for GPU runs of this kind. The precompile warm-up covers CPU Float64 runs. |
 | `--small_test` | off | 32×16 columns (16 km × 8 km), 1 h. A check that the code runs, not a scientific configuration. |
 | `--restart` | off | Continue from the latest checkpoint in the current directory (see Restarts). |
 | `--stop_time=96h` | 345700 s ≈ 96 h (CM1 `timax`); 1 h with `--small_test` | **Total** simulated time, counted from the start of the original run. Units: `d`, `h`, `min`, `s`. |
@@ -142,24 +142,31 @@ They open directly in Python (`xarray.open_dataset`), MATLAB (`ncread`), ncview,
 
 ## Compile-run strategy
 
-Julia compiles code the first time it runs. For this model that used to cost about 2.5 min of
-every run before the first useful time step. The setup avoids that as follows.
+Julia compiles code the first time it runs. For this model that cost about 2.5 min before the
+first time step of every run. The setup is:
 
-1. **Precompiled package.** All model and simulation setup lives in the package
-   `MonsoonConvection`. During precompilation it executes a short **warm-up run**: a 32×16×65
-   model that takes 3 steps, writes output and a checkpoint, and restarts from it. Julia
-   caches the compiled code for everything the warm-up touches.
-2. **Experiments are values, not code.** Compiled code depends on the *types* of the inputs,
+1. **Precompiled package, CPU warm-up.** All model and simulation setup lives in the package
+   `MonsoonConvection`. During precompilation it executes a short **warm-up run** on CPU: a
+   32×16×65 model that takes 3 steps, writes output and a checkpoint, and restarts from it.
+   Julia caches the compiled code, so a CPU test starts in about 25 s instead of 154 s.
+   `setup_precompile.jl` is the same on every machine.
+2. **GPU jobs compile their GPU code at startup.** There is deliberately no GPU precompile
+   step. On a 47 h job, a few minutes of compiling cost under 0.5%. An earlier version
+   precompiled a GPU warm-up inside a package extension. It failed in ways that were hard to
+   see (see Troubleshooting) and couldn't be tested without a GPU, so it was removed.
+3. **Check the real path.** `check_gpu.jl` builds the model on the GPU and takes time steps.
+   It reports PASS/FAIL per stage with the real error. Both setup scripts end with a
+   fresh-process check and exit non-zero on failure, because Pkg's summary can report "✗"
+   and still succeed.
+4. **Experiments are values, not code.** Compiled code depends on the *types* of the inputs,
    not their *values*. The sounding is passed as plain vectors (`Sounding`), and the
    geostrophic wind is read from a precomputed field. Changing the sounding (values or number
    of levels), initial conditions, grid size or parameter values therefore reuses the cache.
-3. **Hardware is requested, never auto-detected.** You request `--arch=cpu` or `--arch=gpu`.
-   A quick check runs before anything could touch the compile cache, and halts with no
-   changes if the hardware is missing. CUDA is loaded only for `gpu`.
-4. **GPU warm-up is isolated.** The GPU warm-up lives in a package extension controlled by
-   the `precompile_gpu` preference in `LocalPreferences.toml`. Switching between `cpu` and
-   `gpu` recompiles only that extension, never the CPU cache. `setup_precompile.jl` writes
-   the preference only when the request changes it.
+5. **Hardware is requested, never auto-detected.** `--arch=cpu|gpu`. A quick check halts a
+   `gpu` request before any package loads if no working GPU is present. CUDA is loaded only
+   for `gpu`, and is never compiled by `setup_precompile.jl`.
+6. **Compile where you run.** On the cluster, compile on a GPU node, which has the driver and
+   enough memory. The login node only does `git pull` and downloads packages.
 
 ### What triggers recompilation
 
@@ -169,12 +176,11 @@ every run before the first useful time step. The setup avoids that as follows.
 | Grid size, parameter values passed to `build_model` / `build_simulation`, run flags | No (a full-size grid compiles a few extra kernels at run time) |
 | Editing `MonsoonConvection/src`, even comments | Yes, the package (≈ 2 min) |
 | Microphysics or turbulence-closure *type*, new forcing kinds (edits in the package) | Yes, the package |
-| `setup_precompile.jl` with a different `--arch` | Yes, only the CUDA extension |
 | Package updates (`Pkg.update`) or a new Julia version | Yes |
-| A different CPU type (laptop vs. HPC node) | Separate cache per CPU type (see HPC setup) |
+| A different CPU type (laptop vs. HPC node) | Separate cache per CPU type; they coexist |
 
-After any change that recompiles, run `setup_precompile.jl` again before production runs.
-Otherwise the first run pays the compile time itself.
+After any change that recompiles, run `setup_precompile.jl` again (and `check_gpu.jl` on the
+cluster) before production runs.
 
 ## PC / laptop setup (CPU)
 
@@ -183,7 +189,7 @@ Tested with Julia 1.13.1 on an Apple M3.
 ```sh
 cd /path/to/breeze
 julia --project -e 'using Pkg; Pkg.instantiate()'
-julia --project setup_precompile.jl --arch=cpu    # about 2.5 min once; seconds when nothing changed
+julia --project setup_precompile.jl    # about 2.5 min once; seconds when nothing changed
 ```
 
 The first run of a fresh install also downloads the radiation and microphysics lookup tables,
@@ -216,10 +222,9 @@ srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 curl -sI https://github.com | head -1 
   mixes GPU types, request one explicitly, e.g. `--gres=gpu:a100:1`. The type names are shown
   in the `%G` column of `sinfo`.
 - Some clusters use `--gpus=1` instead of `--gres=gpu:1`.
-- **No internet on compute nodes?** Then do the first precompile (step 2a) on a login node. It
-  downloads the radiation and microphysics lookup tables. CUDA.jl's own runtime libraries are
-  normally fetched when CUDA is first loaded; if that fails on a compute node, see the CUDA.jl
-  documentation on `CUDA.set_runtime_version!`.
+- **No internet on compute nodes?** Lookup tables and the CUDA runtime are downloaded on first
+  use. Trigger the downloads once from the login node: run `Pkg.instantiate()` (step 1), then
+  `julia --project -e 'using CUDA'` after pinning the CUDA runtime version (step 2).
 
 ### 1. Environment and Julia depot (login node)
 
@@ -234,54 +239,52 @@ JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 
 Use the same Julia version as `Manifest.toml` (1.13.x); juliaup makes this easy.
 
-**CPU type.** Compile caches are keyed by CPU type. If the login node and the `ceoas-gpu` nodes
-have different CPUs (compare `lscpu` output) but share the depot, set a multi-target
-`JULIA_CPU_TARGET` in `~/.bashrc` *before* precompiling, so one cache serves both. Adjust the
-targets to the CPUs you found:
+**CPU type.** Compile caches are keyed by CPU type, and caches for different CPUs coexist in
+the depot. Since all compiling happens on the GPU nodes, leave `JULIA_CPU_TARGET` **unset**
+(native CPU); remove it from `~/.bashrc` if you set it earlier. Multi-target strings multiply
+the memory needed to precompile.
 
-```sh
-export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;znver3,clone_all"
-```
+### 2. Set up and check a GPU node (interactive)
 
-Otherwise, always precompile on a `ceoas-gpu` node.
-
-### 2. Precompile
-
-a) Optional, on the login node, which also downloads the lookup tables:
-
-```sh
-julia --project setup_precompile.jl --arch=cpu
-```
-
-b) On a GPU node, in an interactive session:
+All compiling happens here: the GPU node has the NVIDIA driver and enough memory (precompiling
+needs about 6 GB, more than a login node usually allows).
 
 ```sh
 srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l
 cd ~/monsoon-breeze
-nvidia-smi                                         # confirm the GPU is visible
-julia --project setup_precompile.jl --arch=gpu
+nvidia-smi                                  # your GPU: ~0 MiB used, no other processes
+echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES  # set inside a GPU allocation
+
+julia --project setup_precompile.jl         # CPU warm-up + load check (≈ 3–5 min)
+julia --project check_gpu.jl                # stages 1–2: CUDA, GPU context, model compiles and steps
+julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-min end-to-end run
 ```
 
-- The first time it reports `precompile_gpu: true (changed)` and runs the CPU and GPU (Float32)
-  warm-ups.
-- Later runs report `unchanged` and finish in seconds.
-- On a node without a working GPU it stops with an error and changes nothing.
-- To go back to CPU-only precompilation, run `setup_precompile.jl --arch=cpu`. This rebuilds
-  only the CUDA extension.
+`check_gpu.jl` prints PASS/FAIL per stage and stops at the first failure with the real error.
 
-### 3. First GPU test (interactive)
+- **Stage 1a fails with "CUDA.functional() is false":** the message gives the fix, which is to
+  pin the CUDA runtime to the driver's version, e.g.
 
-In the same `srun` session, check that the GPU path works and measure throughput:
+  ```sh
+  julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.8")'   # version from nvidia-smi
+  ```
+
+  The pin is stored in `LocalPreferences.toml`, which is per machine and git-ignored.
+- **Stage 1b fails with "could not create a CUDA context":** the GPU is busy or not allocated
+  to your shell. See Troubleshooting.
+
+Rerun `setup_precompile.jl` and `check_gpu.jl` after every `git pull` or package update.
+
+### 3. Measure throughput (interactive, optional)
 
 ```sh
-mkdir -p /path/to/scratch/monsoon_gputest && cd /path/to/scratch/monsoon_gputest
-julia --project=$HOME/monsoon-breeze $HOME/monsoon-breeze/monsoon_convection.jl --arch=gpu --small_test
-# full domain for 1 simulated hour: check memory (nvidia-smi in a second shell) and s/step
+mkdir -p ~/monsoon-breeze/run/gpu_1h && cd ~/monsoon-breeze/run/gpu_1h
 julia --project=$HOME/monsoon-breeze $HOME/monsoon-breeze/monsoon_convection.jl --arch=gpu --stop_time=1h 2>&1 | tee gpu_1h.log
 ```
 
-The progress lines show the wall time per 100 steps. Multiply by the expected number of steps
-(25,000–45,000) to estimate the length of the full run.
+This runs the full domain for one simulated hour. Watch memory with `nvidia-smi` in a second
+shell. The progress lines show wall time per 100 steps; multiply by the expected number of
+steps (25,000–45,000) to estimate the length of the full run.
 
 ### 4. Production runs (batch)
 
@@ -325,11 +328,9 @@ Notes:
   one was given). Output is appended to the existing NetCDF files.
 - The log ends with "Reached stop time …" or "Wall-time limit reached … Continue with --restart".
 
-**What the cache does not cover on GPU.** The precompile cache covers the CPU-side work:
-model construction, initialization, output setup and kernel launch code. The CUDA kernels
-themselves are still compiled at the start of every GPU job, because CUDA.jl does not keep
-them between sessions. Expect a shorter startup than without the package, but not the
-near-zero startup seen on CPU.
+**GPU startup.** The precompiled code covers the CPU side. GPU jobs compile their GPU-specific
+code (Float32 methods and CUDA kernels) at startup, which takes a few minutes and is part of
+the 1 h margin between `WALL_TIME` and `--time`.
 
 ## Writing a new experiment
 
@@ -369,28 +370,41 @@ section of `MonsoonConvection/src/MonsoonConvection.jl` and does recompile.
 - **Compile cache / depot**: where precompiled packages live (`~/.julia` by default;
   `JULIA_DEPOT_PATH` to change). Caches are specific to the Julia version, package versions,
   CPU type and preferences.
-- **Preference** (`LocalPreferences.toml`): a setting read at compile time. Changing it
-  recompiles the code that reads it. Here only `precompile_gpu` exists.
-- **Extension**: package code that loads only when another package (here CUDA) is loaded.
+- **Preference** (`LocalPreferences.toml`): a per-machine setting read at compile time, e.g.
+  CUDA's pinned runtime version.
+- **CUDA context**: the per-process state CUDA creates on the GPU at the first GPU operation.
+  Creating it fails if the GPU is busy or not allocated to you.
 - **Checkpoint**: a file with the full model state, used to restart a run.
 
 ## Troubleshooting
 
-- **"GPU requested, but no NVIDIA GPU was found"**: you're on a node without a GPU. Move to a
-  GPU node or use `--arch=cpu`. Nothing was changed.
-- **"precompile_gpu = true, but CUDA is not functional"** during precompilation: the GPU
-  warm-up was requested, but `Pkg.precompile()` ran where CUDA doesn't work, e.g. a login
-  node. Precompile on a GPU node, or run `setup_precompile.jl --arch=cpu`.
+These are the failures met while setting up the cluster, with causes and fixes:
+
+- **"GPU requested, but no NVIDIA GPU was found"**: you're on a node without a GPU (e.g. the
+  login node). Move to a GPU allocation (`srun ... --gres=gpu:1`) or use `--arch=cpu`. Nothing
+  was changed.
+- **"CUDA.functional() is false"** (or "CUDA.jl could not find an appropriate CUDA runtime"): CUDA's
+  runtime package was compiled on a node without a driver (the login node) and recorded "no
+  runtime". Pin the runtime version on the GPU node as `check_gpu.jl` instructs. Avoid it in
+  future by never precompiling on the login node; install there with
+  `JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'`.
+- **"Out of GPU memory" while creating a context** (stack trace through
+  `cuDevicePrimaryCtxRetain`), even for a tiny model: the GPU is in use by another process, or
+  your shell has no GPU allocated. Check `echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES` (empty
+  means no allocation), `nvidia-smi` (other processes, memory use) and
+  `ps -u $USER -f | grep julia` (leftover sessions). Start a fresh `srun ... --gres=gpu:1`.
+- **LLVM "out of memory" or `ProcessSignaled(9)` while precompiling**: not enough memory for
+  the precompile, which needs about 6 GB. Login nodes usually allow less, and a multi-target
+  `JULIA_CPU_TARGET` multiplies the need. Precompile on a compute node with `--mem=32G`, and
+  leave `JULIA_CPU_TARGET` unset.
+- **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
+  for the full domain (≈ 17 GiB of model state). Request a larger GPU type, or reduce `Nx`,
+  `Ny` in the driver.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
   and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and that nothing
   edits `MonsoonConvection/src`.
-- **`MonsoonConvectionCUDAExt` (or CUDA) fails to precompile on a login/head node**: CUDA.jl
-  can't always be compiled on a node without an NVIDIA driver. `setup_precompile.jl --arch=cpu`
-  therefore precompiles only `MonsoonConvection` and Oceananigans, never CUDA. Use
-  `JULIA_PKG_PRECOMPILE_AUTO=0` with `Pkg.instantiate()` there too, and do the GPU precompile
-  (`--arch=gpu`) on a GPU node. The error is harmless for CPU runs, which never load CUDA.
-- **CUDA out of memory**: the GPU is too small for the full domain (≈ 17 GiB of model state).
-  Request a larger GPU type, or reduce `Nx`, `Ny` in the driver.
+- **Leftover `[MonsoonConvection] precompile_gpu` in `LocalPreferences.toml`**: from an earlier
+  version; nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
 - **NetCDF "already exists … Mode will be set to append"** on `--restart`: expected; output
   continues in the same files.
 - **`test_checkpoint.jl`** needs CairoMakie and UnicodePlots, which aren't in this

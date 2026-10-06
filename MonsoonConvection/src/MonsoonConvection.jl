@@ -163,7 +163,7 @@ end
 #  • Changing a scheme or its type (e.g. P3Microphysics → OneMomentCloudMicrophysics,
 #    a different closure or advection scheme, a new forcing function) means editing
 #    this file. That recompiles the package: rerun
-#        julia --project setup_precompile.jl cpu    (or gpu, on a GPU node)
+#        julia --project setup_precompile.jl
 #    so the precompile workload is rebuilt before the next production run.
 #
 # Experiment inputs (sounding, initial conditions) do NOT go here; they belong in the

@@ -1,82 +1,44 @@
-# Request the hardware that MonsoonConvection's precompile cache should target, then precompile.
+# Precompile MonsoonConvection, including its CPU warm-up run, and check that it loads.
 #
-#     julia --project setup_precompile.jl --arch=cpu   # CPU warm-up run only (laptop, CPU nodes)
-#     julia --project setup_precompile.jl --arch=gpu   # CPU + GPU warm-up runs (on a GPU node)
+#     julia --project setup_precompile.jl
 #
-# Order of operations:
-#   1. parse the request (--arch=cpu|gpu is required; no auto-detection)
-#   2. lightweight hardware check (preflight.jl); halt if the hardware is missing,
-#      before anything is written or precompiled
-#   3. compare the request with the current `precompile_gpu` preference (LocalPreferences.toml)
-#   4. write the preference only if it changed, then precompile (cpu: only what CPU runs
-#      load, never CUDA; gpu: everything)
-#      (a no-op when nothing changed, so an existing cache is never needlessly rebuilt)
+# Run it once after installing, and again after `git pull`, package updates or edits to
+# MonsoonConvection/src. It is the same everywhere (laptop, GPU node): the precompiled code is
+# hardware-independent, and GPU jobs compile their GPU-specific code at startup. To check a GPU
+# node, use check_gpu.jl.
 #
-# The `precompile_gpu` preference is read only by MonsoonConvectionCUDAExt, so switching
-# between cpu and gpu recompiles only that extension, never the base package's CPU cache.
+#   - Needs about 6 GB of memory. On HPC, run it on a compute node (srun --mem=32G ...), not on a
+#     login node, whose per-user memory limit is usually lower.
+#   - Never compiles CUDA.jl: CPU runs don't load it, and compiling it on a node without an
+#     NVIDIA driver breaks CUDA on the GPU nodes later (see README, Troubleshooting).
+#   - Ends with a load check in a fresh Julia process and exits with an error if loading fails.
+#     Pkg reports some failures only as "✗" without failing, so its summary is not trusted.
 #
-# Precompile caches are keyed by CPU type, so a laptop and an HPC node keep separate
-# caches automatically. If login and compute nodes differ but share a Julia depot, set e.g.
-#     export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;znver3,clone_all"
-# (adjusted to the cluster's CPUs) so that one cache serves all node types.
+# Compiled code is cached per CPU type, so the laptop and cluster nodes keep separate caches.
 
-const usage = "usage: julia --project setup_precompile.jl --arch=cpu|gpu"
-
-include(joinpath(@__DIR__, "preflight.jl"))
-
-request = try
-    flags = parse_flags(ARGS, ("arch",))
-    haskey(flags, "arch") || error("--arch is required.")
-    check_requested_architecture(flags["arch"])
-catch err
-    println(stderr, "ERROR: ", sprint(showerror, err))
-    println(stderr, usage)
+if !isempty(ARGS)
+    println(stderr, "ERROR: setup_precompile.jl takes no arguments (got: $(join(ARGS, ' '))).")
+    any(startswith("--arch"), ARGS) &&
+        println(stderr, "--arch is no longer needed: precompilation is the same for CPU and GPU runs. " *
+                        "To check a GPU node, run: julia --project check_gpu.jl")
     exit(1)
 end
 
-using TOML, Preferences, Pkg
-
-package_uuid = Base.UUID(TOML.parsefile(joinpath(@__DIR__, "MonsoonConvection", "Project.toml"))["uuid"])
-
-requested = request == "gpu"
-current = Preferences.load_preference(package_uuid, "precompile_gpu", false)
-changed = requested != current
-
-changed && Preferences.set_preferences!(package_uuid, "precompile_gpu" => requested; force = true)
+using Pkg
 
 println("""
-Requested architecture: $request
-GPU check:              $(request == "gpu" ? "passed (NVIDIA device present, CUDA functional)" : "not needed")
-precompile_gpu:         $requested ($(changed ? "changed" : "unchanged"))
-CPU:                    $(Sys.CPU_NAME)
-JULIA_CPU_TARGET:       $(get(ENV, "JULIA_CPU_TARGET", "(unset, native)"))
+CPU:              $(Sys.CPU_NAME)
+JULIA_CPU_TARGET: $(get(ENV, "JULIA_CPU_TARGET", "(unset, native CPU; recommended)"))
+Memory:           $(round(Sys.total_memory() / 2^30, digits=1)) GiB total on this node; precompiling needs about 6 GB
 """)
 
-# cpu: precompile only what a CPU run loads. CUDA.jl and MonsoonConvectionCUDAExt are left
-# alone: they are never loaded on CPU, and compiling CUDA can fail on nodes without an NVIDIA
-# driver (e.g. HPC login nodes).
-# gpu: precompile everything, including CUDA and the extension's GPU warm-up run.
-if request == "cpu"
-    Pkg.precompile(["MonsoonConvection", "Oceananigans"])
-else
-    Pkg.precompile()
-end
+# Precompile only what a run loads; never CUDA (see header).
+Pkg.precompile(["MonsoonConvection", "Oceananigans"])
 
-# Load check: load what a run loads, in a fresh process. Pkg reports a failed extension only
-# as "✗" without the error, and does not fail; loading prints the full error and lets this
-# script exit with an error status.
-load_code = if request == "gpu"
-    """
-    using CUDA, MonsoonConvection
-    Base.get_extension(MonsoonConvection, :MonsoonConvectionCUDAExt) === nothing &&
-        error("MonsoonConvectionCUDAExt failed to load; see the error above")
-    """
-else
-    "using MonsoonConvection"
-end
-
-println("\nLoad check ($request): loading $(request == "gpu" ? "CUDA + MonsoonConvection" : "MonsoonConvection") in a fresh process...")
-load_ok = success(pipeline(`$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e $load_code`;
+# Load check in a fresh process: prints the full error of anything that failed and sets the
+# exit status, independently of Pkg's summary.
+println("\nLoad check: loading MonsoonConvection in a fresh process...")
+load_ok = success(pipeline(`$(Base.julia_cmd()) --project=$(dirname(Base.active_project())) -e "using MonsoonConvection"`;
                            stdout, stderr))
 println(load_ok ? "Load check: ok" : "Load check: FAILED (error above)")
 load_ok || exit(1)

@@ -19,9 +19,8 @@
 #
 # Arguments after the script name are passed to monsoon_convection.jl (e.g. --restart,
 # --stop_time=96h, --float=Float64). See the README, "HPC setup", before the first run:
-# check the partition's GPU request syntax and limits, and precompile with
-#   julia --project setup_precompile.jl --arch=gpu
-# on a GPU node.
+# check the partition's GPU request syntax and limits, and on a GPU node run
+#   julia --project setup_precompile.jl && julia --project check_gpu.jl --smoke_test
 
 #SBATCH --job-name=monsoon
 #SBATCH --partition=ceoas-gpu

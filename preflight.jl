@@ -56,6 +56,26 @@ const valid_architectures = ("cpu", "gpu")
 "Cheap test for an NVIDIA GPU that does not load CUDA.jl."
 nvidia_gpu_present() = Sys.which("nvidia-smi") !== nothing || ispath("/dev/nvidia0")
 
+"The highest CUDA version the NVIDIA driver supports (\"12.8\"), from nvidia-smi, or nothing."
+function driver_cuda_version()
+    Sys.which("nvidia-smi") === nothing && return nothing
+    output = try read(`nvidia-smi`, String) catch; return nothing end
+    m = match(r"CUDA Version:\s*([0-9]+\.[0-9]+)", output)
+    return m === nothing ? nothing : m.captures[1]
+end
+
+"How to fix CUDA.functional() == false on a node that has an NVIDIA GPU."
+function cuda_runtime_fix_message()
+    version = something(driver_cuda_version(), "X.Y")
+    return """
+    The usual cause on HPC: CUDA's runtime package was compiled on a node without a GPU driver
+    (e.g. a login node) and recorded "no CUDA runtime". Fix it once by pinning the runtime to
+    the driver's CUDA version (nvidia-smi reports $version), then start a new Julia session:
+        julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"$version")'
+    and check with:  julia --project check_gpu.jl
+    (The pin is stored in LocalPreferences.toml, which is per machine and git-ignored.)"""
+end
+
 """
     check_requested_architecture(request)
 
@@ -74,7 +94,7 @@ function check_requested_architecture(request::AbstractString)
         Core.eval(Main, :(using CUDA))
         Base.invokelatest(() -> Main.CUDA.functional()) ||
             error("GPU requested and an NVIDIA device is present, but CUDA.functional() is false. " *
-                  "Nothing was changed or precompiled.")
+                  "Nothing was changed or precompiled.\n" * cuda_runtime_fix_message())
     end
 
     return request

@@ -74,12 +74,14 @@
 #
 # Compilation: the model code lives in the precompiled package ./MonsoonConvection
 # (see README.md). One-time setup, and again after package updates or package edits:
-#     julia --project setup_precompile.jl --arch=cpu    # or --arch=gpu, on a GPU node
+#     julia --project setup_precompile.jl     # same on every machine (on HPC: on a GPU node)
+#     julia --project check_gpu.jl            # on a GPU node: checks the model runs on the GPU
+# GPU runs compile their GPU-specific code at startup (a few minutes).
 # Editing this driver never triggers recompilation:
 #   free to change: the sounding (values and number of levels), initial conditions,
 #                   grid size, keyword values of build_model/build_simulation, flags
 #   recompiles:     editing MonsoonConvection, changing the microphysics or closure type,
-#                   setup_precompile.jl with a different --arch, a new CPU type
+#                   package updates, a new CPU type
 # ──────────────────────────────────────────────────────────────────────────────────────
 
 include(joinpath(@__DIR__, "preflight.jl"))
