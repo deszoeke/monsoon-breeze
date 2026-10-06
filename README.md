@@ -77,6 +77,48 @@ of host RAM is ample.
 laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size GPU run first
 (see "First GPU test" below) to choose `--wall_time` and the job's `--time`.
 
+## Changes to Breeze defaults
+
+`MonsoonConvection` departs from Breeze's defaults in two places. Both are in `build_model`
+(`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section) and should be kept in mind when
+interpreting results or comparing with other Breeze runs.
+
+### 1. TKE closure: eddy diffusivities capped at 100 m² s⁻¹ (physics change)
+
+```julia
+closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
+                                      maximum_tracer_diffusivity = maximum_diffusivity,
+                                      maximum_tke_diffusivity = maximum_diffusivity)   # default 100 m² s⁻¹
+```
+
+- **Why.** Breeze's `TKEBasedTurbulenceClosure` (0.11.3) uses the mixing length
+  ℓ = min(z, Cᴺ √e / N). Where the stratification is neutral or unstable (N² ≤ 0), ℓ falls back
+  to z, the height above the ground. A locally unstable layer aloft therefore gets ℓ of order
+  10–20 km, and K = Sᵘ ℓ √e of order 10⁴–10⁵ m² s⁻¹. Breeze's default caps are infinite.
+- **What happened.** In the first full-domain GPU run, max Kᵘ jumped from ~40 to 3×10⁴ m² s⁻¹
+  at iteration ~215, reached 1.2×10⁵ by iteration 250, and the run failed with NaN at iteration
+  257. The NaN first appeared in P3 ice number and fall speeds at 20.75–28 km (found with
+  `--debug_nan`). Small-domain CPU runs never ran away: max Kᵘ stayed ≤ 27 m² s⁻¹ and decayed.
+- **Relation to CM1.** CM1's PBL scheme (`ipbl = 2`) limits the mixing length with
+  `l_inf = 75 m` (namelist), which keeps K ≲ 50 m² s⁻¹ for typical TKE. The cap is the closest
+  available substitute, since Breeze's closure has no mixing-length limit. It caps K, not ℓ, so it
+  is not the same as CM1's formulation.
+- **Effect.** It changes the physics only where K would exceed the cap. Normal maxima here are
+  ~30–40 m² s⁻¹, in the boundary layer. Diagnose how often the cap is active by checking
+  `maximum(model.closure_fields.Kᵘ)` (also printed by `--debug_nan`).
+- **Changing it.** Pass a different value from the driver, which needs no recompile:
+  `build_model(sounding; arch, Nx, Ny, maximum_diffusivity = 50)`. `Inf` restores Breeze's
+  default.
+- **Upstream.** Worth raising with the Breeze developers: a mixing-length limit (e.g. a Blackadar
+  form ℓ = κz / (1 + κz / ℓ∞)) or finite default caps would prevent the runaway at its source.
+
+### 2. P3 microphysics built on the target architecture (bug workaround, no physics change)
+
+`microphysics = on_architecture(arch, P3Microphysics())`. Breeze 0.11.3 embeds the microphysics in
+the surface-flux boundary conditions before moving it to the GPU, so GPU runs failed with "not
+isbits" (CPU lookup tables inside a GPU kernel). Building P3 on the GPU first avoids that; on CPU
+it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
+
 ## Running the model
 
 ```sh
@@ -395,6 +437,13 @@ These are the failures met while setting up the cluster, with causes and fixes:
   the precompile, which needs about 6 GB. Login nodes usually allow less, and a multi-target
   `JULIA_CPU_TARGET` multiplies the need. Precompile on a compute node with `--mem=32G`, and
   leave `JULIA_CPU_TARGET` unset.
+- **NaN after a few hundred steps, with `--debug_nan` showing max `Kᵘ` jumping from ~40 to
+  10⁴–10⁵ m² s⁻¹, then NaN in ice number (`nⁱ`) above 20 km**: runaway eddy diffusivity. The
+  TKE closure's mixing length is ℓ = min(z, Cᴺ√e/N), so wherever N² ≤ 0 aloft it becomes the
+  height above the ground (~20 km). `build_model` therefore caps the closure's diffusivities at
+  `maximum_diffusivity = 100` m² s⁻¹, playing the role of CM1's `l_inf = 75 m`. Normal maxima are
+  ~40 m² s⁻¹ in the boundary layer. To change the cap, pass e.g. `maximum_diffusivity = 50` to
+  `build_model` in the driver.
 - **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
   for the full domain (≈ 17 GiB of model state). Request a larger GPU type, or reduce `Nx`,
   `Ny` in the driver.

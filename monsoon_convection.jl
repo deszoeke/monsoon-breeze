@@ -13,7 +13,10 @@
 #   hadvord/vadvord = 5, weno_order = 5                → WENO(order=5)
 #   ptype = 5 (Morrison 2-moment w/ ice)               → P3 microphysics (Morrison & Milbrandt
 #                                                        successor; 2-moment rain and ice)
-#   ipbl = 2, sgsmodel = 0, horizturb = 0              → vertical-only TKE closure
+#   ipbl = 2, sgsmodel = 0, horizturb = 0              → vertical-only TKE closure, diffusivities
+#      (l_inf = 75 m)                                    capped at maximum_diffusivity = 100 m²/s
+#                                                        (MODIFIED from Breeze's default: no cap;
+#                                                        see README, "Changes to Breeze defaults")
 #   sfcmodel = 1, oceanmodel = 1, tsk0 = 301 K         → bulk fluxes over fixed 301 K SST
 #   radopt = 2 (RRTMG), dtrad = 300 s, perpetual sun   → RRTMGP all-sky, fixed cos(zenith),
 #      (solcon = 650.83 W/m², coszen = 0.636,             updated every 300 s
@@ -212,10 +215,13 @@ if haskey(flags, "debug_nan")
 
     function debug_nan(sim)
         if iteration(sim) % 10 == 0
-            @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, T ∈ [%.1f, %.1f], max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g\n",
+            # value and height of the maximum of a field (copied to the host)
+            where_max(f) = (data = Array(interior(f)); (v, I) = findmax(data); (v, Array(znodes(f))[I[3]]))
+            K, zK = where_max(m.closure_fields.Kᵘ)
+            T, zT = where_max(m.temperature)
+            @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, min T = %.1f, max T = %.1f at z = %.0f m, max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g at z = %.0f m\n",
                     iteration(sim), prettytime(sim), sim.Δt, maximum(abs, m.velocities.w), minimum(m.temperature),
-                    maximum(m.temperature), 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ),
-                    maximum(m.closure_fields.Kᵘ))
+                    T, zT, 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ), K, zK)
         end
         all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
 

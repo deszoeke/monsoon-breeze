@@ -191,7 +191,8 @@ function build_model(sounding::Sounding;
                      solar_constant = 650.83,           # perpetual sun, from cm1.print.out
                      cos_zenith = 0.6360782,
                      CO₂ = 387.75e-6,
-                     radiation_interval = 300)          # CM1 dtrad
+                     radiation_interval = 300,          # CM1 dtrad
+                     maximum_diffusivity = 100)         # m² s⁻¹, cap on the TKE closure's K (see below)
 
     FT = Oceananigans.defaults.FloatType
     s = sounding
@@ -271,7 +272,16 @@ function build_model(sounding::Sounding;
     microphysics = on_architecture(arch, P3Microphysics())
 
     # PBL turbulence (CM1 ipbl = 2, no LES subgrid model)
-    closure = TKEBasedTurbulenceClosure()
+    #
+    # The closure's mixing length is ℓ = min(z, Cᴺ√e/N): where N² ≤ 0 it becomes the height above
+    # the ground, so a locally unstable layer aloft (e.g. near 20 km) gets ℓ ~ 20 km and
+    # K = Sᵘ ℓ √e ~ 10⁴–10⁵ m² s⁻¹, which ran away and ended in NaN on the full GPU domain.
+    # CM1's PBL scheme instead limits the mixing length (l_inf = 75 m, i.e. K ≲ 50 m² s⁻¹).
+    # Breeze has no mixing-length limit, so cap the diffusivities; maxima in normal runs are
+    # ~40 m² s⁻¹, so the cap only acts on a runaway.
+    closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
+                                          maximum_tracer_diffusivity = maximum_diffusivity,
+                                          maximum_tke_diffusivity = maximum_diffusivity)
 
     return AtmosphereModel(grid; dynamics, coriolis, microphysics, radiation, closure,
                            forcing, boundary_conditions,
