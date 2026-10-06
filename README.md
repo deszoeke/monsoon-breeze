@@ -24,7 +24,7 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
-| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on an A100 node with enough memory (the login node runs out). |
+| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory (the login node runs out); no GPU needed. |
 | `check_gpu.jl` | Staged check that a GPU node can run the model (CUDA, GPU context, model steps on the GPU); `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
 | `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
@@ -208,8 +208,10 @@ first time step of every run. The setup is:
 5. **Hardware is requested, never auto-detected.** `--arch=cpu|gpu`. A quick check halts a
    `gpu` request before any package loads if no working GPU is present. CUDA is loaded only
    for `gpu`, and is never compiled by `setup_precompile.jl`.
-6. **Compile where you run.** On the cluster, compile on a GPU node, which has the driver and
-   enough memory. The login node only does `git pull` and downloads packages.
+6. **Compile on a compute node, with one portable CPU target.** On the cluster, precompile with
+   `sbatch precompile_job.sh`, which gives the precompile enough memory. Because
+   `JULIA_CPU_TARGET="haswell,-rdrnd"`, that cache works on every node type. The login node
+   only does `git pull` and downloads packages.
 
 ### What triggers recompilation
 
@@ -282,10 +284,18 @@ JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 
 Use the same Julia version as `Manifest.toml` (1.13.x); juliaup makes this easy.
 
-**CPU type.** Compile caches are keyed by CPU type, and caches for different CPUs coexist in
-the depot. Since all compiling happens on the GPU nodes, leave `JULIA_CPU_TARGET` **unset**
-(native CPU); remove it from `~/.bashrc` if you set it earlier. Multi-target strings multiply
-the memory needed to precompile.
+**CPU type.** Compile caches are keyed by CPU type. Use the single portable target
+
+```sh
+export JULIA_CPU_TARGET="haswell,-rdrnd"     # in ~/.bashrc
+```
+
+so that one cache serves every node: the login node (AMD znver2), the A100 nodes (Intel
+Sapphire Rapids) and the other GPU nodes. All of them support the Haswell instruction set.
+Batch jobs and `srun` sessions inherit it from your shell. A job that sees a different
+`JULIA_CPU_TARGET` rejects the cache and recompiles at startup. Avoid multi-target
+strings (e.g. `"generic;sandybridge,clone_all;haswell,clone_all;…"`): they multiply the memory
+needed to precompile. Five targets ran out of memory even on the login node's limit.
 
 ### 2. Set up and check a GPU node (interactive)
 
@@ -296,7 +306,7 @@ Precompiling needs about 6 GB, more than the login node allows.
 
 ```sh
 cd /ceoas/deszoeks/projects/monsoon-breeze
-sbatch precompile_job.sh          # A100 node, 32 GB, ≈ 5 min; log in slurm-precompile-<jobid>.out
+sbatch precompile_job.sh          # no GPU needed, 32 GB, ≈ 5 min; log in slurm-precompile-<jobid>.out
 ```
 
 The log ends with `Load check: ok`. Then check the GPU interactively:
@@ -446,8 +456,8 @@ These are the failures met while setting up the cluster, with causes and fixes:
   `ps -u $USER -f | grep julia` (leftover sessions). Start a fresh `srun ... --gres=gpu:1`.
 - **LLVM "out of memory" or `ProcessSignaled(9)` while precompiling**: not enough memory for
   the precompile, which needs about 6 GB. Login nodes usually allow less, and a multi-target
-  `JULIA_CPU_TARGET` multiplies the need. Precompile on a compute node with `--mem=32G`, and
-  leave `JULIA_CPU_TARGET` unset.
+  `JULIA_CPU_TARGET` multiplies the need. Precompile with `sbatch precompile_job.sh` (32 GB),
+  and use the single target `JULIA_CPU_TARGET="haswell,-rdrnd"`.
 - **NaN after a few hundred steps, with `--debug_nan` showing max `Kᵘ` jumping from ~40 to
   10⁴–10⁵ m² s⁻¹, then NaN in ice number (`nⁱ`) above 20 km**: runaway eddy diffusivity. The
   TKE closure's mixing length is ℓ = min(z, Cᴺ√e/N), so wherever N² ≤ 0 aloft it becomes the
@@ -459,8 +469,8 @@ These are the failures met while setting up the cluster, with causes and fixes:
   for the full domain (≈ 17 GiB of model state). Request a larger GPU type, or reduce `Nx`,
   `Ny` in the driver.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
-  and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and that nothing
-  edits `MonsoonConvection/src`.
+  (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at
+  precompile time and run time, and that nothing edits `MonsoonConvection/src`.
 - **Leftover `[MonsoonConvection] precompile_gpu` in `LocalPreferences.toml`**: from an earlier
   version; nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
 - **NetCDF "already exists … Mode will be set to append"** on `--restart`: expected; output
