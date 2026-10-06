@@ -224,11 +224,19 @@ if haskey(flags, "debug_nan")
             F⁺, zF⁺ = where_max(m.radiation.flux_divergence)
             F⁻, zF⁻ = where_min(m.radiation.flux_divergence)
             Tᵗᵒᵖ = Array(interior(m.temperature))[:, :, end]          # top cell
+            # vertical velocity above 20 km (the sponge), and how many faces have K at the cap
+            wdata = Array(interior(m.velocities.w)); zw = Array(znodes(m.velocities.w))
+            upper = findall(zw .> 20000)
+            wᵘᵖ, Iᵘᵖ = findmax(abs, view(wdata, :, :, upper))
+            Kdata = Array(interior(m.closure_fields.Kᵘ))
+            ncap = count(≥(0.999 * m.closure.maximum_viscosity), Kdata)
             @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, min T = %.1f, max T = %.1f at z = %.0f m, max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g at z = %.0f m\n",
                     iteration(sim), prettytime(sim), sim.Δt, maximum(abs, m.velocities.w), minimum(m.temperature),
                     T, zT, 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ), K, zK)
             @printf("    top cell T ∈ [%.2f, %.2f] K, max nⁱ = %.3g /kg at z = %.0f m, Fᴿ ∈ [%.3g at z = %.0f m, %.3g at z = %.0f m] W/m³\n",
                     minimum(Tᵗᵒᵖ), maximum(Tᵗᵒᵖ), nⁱ, znⁱ, F⁻, zF⁻, F⁺, zF⁺)
+            @printf("    max|w| above 20 km = %.3g m/s at z = %.0f m, faces with Kᵘ at the cap: %d\n",
+                    wᵘᵖ, zw[upper[Iᵘᵖ[3]]], ncap)
         end
         all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
 
