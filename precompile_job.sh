@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=precompile
-#SBATCH --partition=ceoas-gpu
+#SBATCH --partition=ceoas
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G                 # precompiling needs ~6 GB; the login node allows less
 #SBATCH --time=1:00:00
