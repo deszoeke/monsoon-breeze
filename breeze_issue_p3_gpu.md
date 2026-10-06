@@ -7,20 +7,40 @@ On a GPU, an `AtmosphereModel` with `P3Microphysics()` and a flux boundary condi
 `KernelError` in `fill_bottom_and_top_halo!`: the P3 lookup tables inside the boundary
 condition are CPU `Array`s.
 
-Cause: in `AtmosphereModel(...)` the boundary conditions are materialized with the
-microphysics **before** it is moved to the device, and only `model.microphysics` is replaced:
+## Cause
 
-- `src/AtmosphereModels/atmosphere_model.jl` (v0.11.3; same in main @ ed756e9):
-  - ~L226: `materialize_atmosphere_model_boundary_conditions(boundary_conditions, grid, formulation, dynamics, microphysics, thermodynamic_constants)`
-    embeds `microphysics` (CPU tables) in e.g. `EnergyFluxBoundaryConditionFunction`
-    (`thermodynamic_variable_bcs.jl` L339–347) and `NearWallVirtualPotentialTemperature`
-    (`polynomial_bulk_coefficient.jl`, used by `PolynomialCoefficient`).
-  - ~L336: `microphysics = on_architecture(arch, microphysics)` moves the tables to the device
-    afterwards. The copies already captured by the boundary conditions keep the host
-    arrays, and `Adapt.adapt` on them at kernel launch cannot upload host `Array`s.
+The P3 microphysics includes lookup tables, which must be in GPU memory for a GPU run.
 
-`materialize_dynamics(…, microphysics)` and `materialize_microphysical_fields(microphysics, …)`
-also receive the CPU microphysics before the move; I haven't checked whether they keep it.
+The surface-flux boundary conditions **contain their own copy of the P3 microphysics**,
+because they use it to compute moisture at the surface. That copy is made when the
+boundary conditions are built.
+
+In the `AtmosphereModel` constructor, the boundary conditions are built **before** P3's tables
+are moved to the GPU. So:
+
+- the boundary conditions get P3 with its tables in **CPU** memory, and keep it;
+- the model's own microphysics (`model.microphysics`) is then moved to the GPU;
+- the boundary conditions' copy is never updated.
+
+At the first time step, the GPU runs the boundary-condition code, finds the CPU tables in it,
+and fails ("not isbits": GPU code can only use data in GPU memory).
+
+**The fix is to move P3's tables to the GPU before the boundary conditions are built,** so the
+boundary conditions copy the GPU version.
+
+Where this happens (Breeze v0.11.3; the same in main @ ed756e9), in
+`src/AtmosphereModels/atmosphere_model.jl`:
+
+- ~line 226: `materialize_atmosphere_model_boundary_conditions(..., microphysics, ...)` builds the
+  boundary conditions, copying P3 into `EnergyFluxBoundaryConditionFunction`
+  (`thermodynamic_variable_bcs.jl` lines 339–347, used for any flux boundary condition on `ρE`)
+  and into `NearWallVirtualPotentialTemperature` (`polynomial_bulk_coefficient.jl`, used by
+  `PolynomialCoefficient`).
+- ~line 336: `microphysics = on_architecture(arch, microphysics)` moves the tables to the GPU,
+  too late for the boundary conditions.
+
+`materialize_dynamics` and `materialize_microphysical_fields` are also called with P3 before
+line 336. I haven't checked whether they keep a copy too.
 
 ## Minimal example
 

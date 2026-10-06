@@ -217,11 +217,18 @@ if haskey(flags, "debug_nan")
         if iteration(sim) % 10 == 0
             # value and height of the maximum of a field (copied to the host)
             where_max(f) = (data = Array(interior(f)); (v, I) = findmax(data); (v, Array(znodes(f))[I[3]]))
+            where_min(f) = (data = Array(interior(f)); (v, I) = findmin(data); (v, Array(znodes(f))[I[3]]))
             K, zK = where_max(m.closure_fields.Kᵘ)
             T, zT = where_max(m.temperature)
+            nⁱ, znⁱ = where_max(μ.nⁱ)
+            F⁺, zF⁺ = where_max(m.radiation.flux_divergence)
+            F⁻, zF⁻ = where_min(m.radiation.flux_divergence)
+            Tᵗᵒᵖ = Array(interior(m.temperature))[:, :, end]          # top cell
             @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, min T = %.1f, max T = %.1f at z = %.0f m, max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g at z = %.0f m\n",
                     iteration(sim), prettytime(sim), sim.Δt, maximum(abs, m.velocities.w), minimum(m.temperature),
                     T, zT, 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ), K, zK)
+            @printf("    top cell T ∈ [%.2f, %.2f] K, max nⁱ = %.3g /kg at z = %.0f m, Fᴿ ∈ [%.3g at z = %.0f m, %.3g at z = %.0f m] W/m³\n",
+                    minimum(Tᵗᵒᵖ), maximum(Tᵗᵒᵖ), nⁱ, znⁱ, F⁻, zF⁻, F⁺, zF⁺)
         end
         all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
 
