@@ -22,6 +22,7 @@ using Oceananigans
 using Oceananigans.Units
 using Oceananigans.Grids: znodes
 using Oceananigans.TimeSteppers: update_state!
+using Oceananigans.Architectures: on_architecture
 
 using NCDatasets  # required for RRTMGP lookup tables
 using RRTMGP
@@ -261,7 +262,13 @@ function build_model(sounding::Sounding;
                                        ice_effective_radius = ConstantRadiusParticles(30e-6))
 
     # Microphysics (CM1 ptype = 5: Morrison 2-moment with ice → P3)
-    microphysics = P3Microphysics()
+    #
+    # Built directly on `arch`: Breeze (0.11.3 and main as of Oct 2026) embeds the microphysics
+    # in the surface-flux boundary conditions (energy-flux conversion, stability-dependent bulk
+    # coefficient) *before* AtmosphereModel moves the microphysics to the GPU, so those boundary
+    # conditions kept CPU lookup tables and GPU kernels failed with "not isbits". Moving P3
+    # first makes both share the device copy; on CPU this is a no-op.
+    microphysics = on_architecture(arch, P3Microphysics())
 
     # PBL turbulence (CM1 ipbl = 2, no LES subgrid model)
     closure = TKEBasedTurbulenceClosure()
