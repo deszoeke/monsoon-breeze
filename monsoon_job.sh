@@ -33,7 +33,7 @@
 set -euo pipefail
 
 # Repository location (override at submission: REPO=/other/path sbatch monsoon_job.sh)
-REPO=${REPO:-$HOME/monsoon-breeze}
+REPO=${REPO:-/ceoas/deszoeks/projects/monsoon-breeze}
 
 # Run directory for output and checkpoints (one per experiment)
 RUN=${RUN:-$REPO/run}
