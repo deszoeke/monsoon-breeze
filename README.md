@@ -288,60 +288,43 @@ steps (25,000–45,000) to estimate the length of the full run.
 
 ### 4. Production runs (batch)
 
-Use the job script [`monsoon_job.sh`](monsoon_job.sh) in the repository. Output and
-checkpoints go to the run directory `RUN`, by default `run/` in the repository (git-ignored).
-The Slurm log `slurm-<jobid>.out` goes to the directory you submit from:
+Submit [`monsoon_job.sh`](monsoon_job.sh) from the **repository directory** on the **login
+node**. Arguments after the script name go to `monsoon_convection.jl`:
 
 ```sh
-cd ~/monsoon-breeze
-sbatch monsoon_job.sh                   # first job
-sbatch monsoon_job.sh --restart         # each continuation job, until the stop time
-# or chain a continuation behind the first job:
-jid=$(sbatch --parsable monsoon_job.sh)
+cd /ceoas/deszoeks/projects/monsoon-breeze
+sbatch monsoon_job.sh                          # first job
+sbatch monsoon_job.sh --restart                # each continuation, until the stop time
+jid=$(sbatch --parsable monsoon_job.sh)        # or chain a continuation behind it:
 sbatch --dependency=afterok:$jid monsoon_job.sh --restart
-
-# a second experiment in its own run directory:
-RUN=$HOME/monsoon-breeze/run/sst302 sbatch monsoon_job.sh
+RUN=run/sst302 sbatch monsoon_job.sh           # another experiment in its own run directory
+sbatch monsoon_job.sh --small_test --stop_time=10min   # quick test of the batch path
 ```
 
-A restart resumes from the latest checkpoint in `RUN`, so give each experiment its own `RUN`.
-On HPC, `RUN` can also point to a scratch filesystem if the repository's disk is small.
-
-What the script does:
-- Requests `-p ceoas-gpu`, one **A100** (`--gres=gpu:a100:1`), 4 CPUs, 64 GB of host memory and
-  48 h. The A100 type matters: `ceoas-gpu` also has GTX 1080 Ti nodes (e.g. ayaya05), whose
-  11 GB is too small for the full domain and which the CUDA 13 runtime no longer supports. Edit the `#SBATCH`
-  lines to match step 0, or override at submission, e.g. `sbatch --time=24:00:00 ...` with
-  `WALL_TIME=23h`.
-- **Temporarily requests two A100s and runs on one** (`--gres=gpu:a100:2`). Slurm keeps assigning
-  aerosmith's GPU 2, which another user's job is using without having requested a GPU. The
-  script runs on the first allocated GPU that's idle (`USE_GPU=idle`, the default), or on the
-  one you name, e.g. `USE_GPU=3 sbatch monsoon_job.sh`. It stops before starting the model if
-  that GPU is busy or not allocated to the job. Once GPU 2 is free again, change the request
-  back to `--gres=gpu:a100:1`.
-- Runs `monsoon_convection.jl --arch=gpu --wall_time=$WALL_TIME` (default `47h`). Any
-  arguments after the script name are passed through, e.g. `--restart` or `--stop_time=96h`.
-- Assumes the repository is at `/ceoas/deszoeks/projects/monsoon-breeze`; override with
-  `REPO=/other/path sbatch ...`.
-  The run directory defaults to `$REPO/run`; override with `RUN=...`.
-- Logs the node, the allocated GPU, the Julia version and the repository commit at the start of
-  the job.
-- Stops at once if `julia` is not the version in `Manifest.toml` (1.13). Batch jobs can find a
-  different `julia` on `PATH`, e.g. a system 1.10. Point it at the right one with
-  `JULIA=$HOME/.juliaup/bin/julia sbatch monsoon_job.sh`.
-- `JULIA_DEPOT_PATH` and `JULIA_CPU_TARGET` lines are commented out in the script. Enable them
-  if you set them when precompiling.
+The script:
+- requests one node of `ceoas-gpu` with A100s, 4 CPUs, 64 GB and 48 h;
+- uses juliaup's Julia (`~/.juliaup/bin` first on `PATH`; the system `julia` is 1.10);
+- runs on the first allocated GPU that's idle (see below);
+- writes output and checkpoints to `RUN` (default `run/`, git-ignored) and the log to
+  `slurm-<jobid>.out`. The log's first line gives the node, GPU, Julia version and run
+  directory, and the last line says "Reached stop time …" or "Wall-time limit reached … Continue
+  with --restart".
 
 Notes:
-- Keep `WALL_TIME` about 1 h below `--time`. That leaves room for startup (CUDA kernel
-  compilation, lookup tables) and the final checkpoint write.
-- **Submit from the login node,** not from inside an interactive `srun` session. A job
-  submitted from inside an allocation inherits that allocation's Slurm settings. (The script
-  runs Julia directly, without `srun`, so the inherited CPU binding no longer breaks it.)
-- `nvidia-smi` in the job's log, or `ssh` to the node, shows GPU usage.
-- A continuation job must run in the same run directory and with the same `--stop_time` (if
-  one was given). Output is appended to the existing NetCDF files.
-- The log ends with "Reached stop time …" or "Wall-time limit reached … Continue with --restart".
+- **A100 only.** `ceoas-gpu` also has GTX 1080 Ti nodes (e.g. ayaya05). Their 11 GB is too small
+  for the full domain, and the CUDA 13 runtime no longer supports them.
+- **Two GPUs requested, one used (temporary).** Slurm keeps assigning aerosmith's GPU 2, which
+  another user's job is using without having requested a GPU. The script therefore asks for
+  `gpu:a100:2` and runs on the idle one. It stops at once if all allocated GPUs are busy. Change
+  it back to `gpu:a100:1` once GPU 2 is free.
+- **Each experiment needs its own `RUN`.** A restart resumes from the latest checkpoint in `RUN`,
+  and continuation jobs must use the same `RUN` and `--stop_time`. Output is appended to the
+  existing NetCDF files.
+- **Keep `WALL_TIME` (default 47h) about 1 h below `--time`.** That leaves time for startup
+  (compiling the GPU code) and the final checkpoint. For example: `sbatch --time=24:00:00`
+  with `WALL_TIME=23h`.
+- **Submit from the login node,** not from inside an interactive `srun` session, whose Slurm
+  settings the job would inherit.
 
 **GPU startup.** The precompiled code covers the CPU side. GPU jobs compile their GPU-specific
 code (Float32 methods and CUDA kernels) at startup, which takes a few minutes and is part of
