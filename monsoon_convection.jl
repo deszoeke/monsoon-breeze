@@ -259,4 +259,17 @@ if haskey(flags, "debug_nan")
     add_callback!(simulation, debug_nan, IterationInterval(1))
 end
 
-run_simulation!(simulation)
+
+# Errors can be thousands of lines (CUDA lists every field of a non-isbits argument, and stack
+# frames print full type parameters). Keep the log short: write the whole error to error.log
+# in the run directory, and print only its first lines with long types abbreviated.
+try
+    run_simulation!(simulation)
+catch err
+    bt = catch_backtrace()
+    write("error.log", sprint(showerror, err, bt))
+    short = split(sprint(showerror, err, bt; context = :limit => true), '\n')
+    println(stderr, "ERROR: ", join(first(short, 40), '\n'))
+    length(short) > 40 && println(stderr, "… ($(length(short) - 40) more lines; full error in $(abspath("error.log")))")
+    exit(1)
+end
