@@ -262,14 +262,15 @@ end
 
 # Errors can be thousands of lines (CUDA lists every field of a non-isbits argument, and stack
 # frames print full type parameters). Keep the log short: write the whole error to error.log
-# in the run directory, and print only its first lines with long types abbreviated.
+# in the run directory, and print only its first 40 lines, each cut to 200 characters.
 try
     run_simulation!(simulation)
 catch err
-    bt = catch_backtrace()
-    write("error.log", sprint(showerror, err, bt))
-    short = split(sprint(showerror, err, bt; context = :limit => true), '\n')
-    println(stderr, "ERROR: ", join(first(short, 40), '\n'))
-    length(short) > 40 && println(stderr, "… ($(length(short) - 40) more lines; full error in $(abspath("error.log")))")
+    full = sprint(showerror, err, catch_backtrace())
+    write("error.log", full)
+    lines = split(full, '\n')
+    clip(line) = length(line) > 200 ? first(line, 200) * " …" : line
+    println(stderr, "ERROR: ", join(clip.(first(lines, 40)), '\n'))
+    println(stderr, "(full error, $(length(lines)) lines: $(abspath("error.log")))")
     exit(1)
 end
