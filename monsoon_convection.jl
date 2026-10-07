@@ -7,7 +7,8 @@
 # CM1 namelist → Breeze mapping
 #
 #   nx, ny, nz = 1024, 512, 65; dx = dy = 500 m      → RectilinearGrid, 512 km × 256 km
-#   stretch_z = 1 (50 m → 500 m by 5 km), ztop 28 km  → explicit z faces (identical to CM1 zf)
+#   stretch_z = 1 (50 m → 500 m by 5 km), ztop 28 km  → CM1 zf up to 18 km; above, Δz stretches
+#                                                        to ~1 km at 28 km (MODIFIED; see "Vertical grid")
 #   wbc = ebc = sbc = nbc = 1                          → Periodic × Periodic
 #   psolver = 3 (compressible)                         → AnelasticDynamics
 #   hadvord/vadvord = 5, weno_order = 5                → WENO(order=5)
@@ -169,7 +170,25 @@ Nx, Ny = small_test ? (32, 16) : (1024, 512)
 sponge_variables = Symbol(get(flags, "sponge", "w"))
 sponge_rate = 1 / parse_duration(get(flags, "sponge_timescale", "300s"))
 
-model = build_model(sounding; arch, Nx, Ny, sponge_variables, sponge_rate)
+# Vertical grid: CM1's levels (50 m at the surface stretching to 500 m by 5 km, then 500 m) up to
+# z_stretch = 18 km, then Δz increasing linearly to about Δz_top at the 28 km lid. Coarser levels
+# in the stratosphere and sponge improve the conditioning of the anelastic pressure solve for the
+# longest horizontal waves and save ~11% of the cells (CM1 itself used 500 m to the top).
+function stretched_top_faces(; z_stretch = 18000, z_top = 28000, Δz_top = 1000)
+    lower = filter(≤(z_stretch), MonsoonConvection.cm1_z_faces())
+    Δz₀ = lower[end] - lower[end-1]                      # 500 m
+    L = z_top - lower[end]
+    n = round(Int, 2L / (Δz₀ + Δz_top))                  # cells, linear Δz from Δz₀ to ~Δz_top
+    Δz₁ = 2L / n - Δz₀                                   # adjusted so the faces end exactly at z_top
+    Δz = [Δz₀ + (Δz₁ - Δz₀) * (i - 1) / (n - 1) for i in 1:n]
+    faces = Float64.(vcat(lower, lower[end] .+ cumsum(Δz)))
+    faces[end] = z_top                                   # exactly, despite rounding
+    return faces
+end
+
+z_faces = stretched_top_faces(Δz_top = 1000)
+
+model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate)
 
 #####
 ##### Initial conditions (CM1 irandp = 1: ±0.25 K random θ perturbations)

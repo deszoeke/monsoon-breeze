@@ -39,8 +39,8 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 |---|---|---|
 | Columns (Nx × Ny) | 1024 × 512 | 32 × 16 |
 | Horizontal extent | 512 km × 256 km, Δx = Δy = 500 m | 16 km × 8 km |
-| Vertical | 65 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, then 500 m (identical to CM1 `zf`) | same |
-| Grid cells | 34.1 million | 33,280 |
+| Vertical | 58 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, 500 m to 18 km (identical to CM1 `zf` so far), then stretching to ~1 km at the lid (CM1: 500 m to the top) | same |
+| Grid cells | 30.4 million | 29,696 |
 | Boundaries | periodic in x and y; rigid lid with a sponge above 20 km | same |
 | Rotation | f-plane, f = 2.53 × 10⁻⁵ s⁻¹ (10°N) | same |
 | Simulated time | 345,700 s ≈ 4 days (CM1 `timax`) | 1 h |
@@ -53,7 +53,7 @@ extrapolated linearly:
 
 | Configuration | Model state |
 |---|---|
-| Full run, Float64 (default) | **≈ 34 GiB** of GPU memory |
+| Full run, Float64 (default) | **≈ 30 GiB** of GPU memory |
 | Full run, Float32 (unstable on this domain) | ≈ 17 GiB |
 | `--small_test`, Float32 (measured) | ≈ 54 MiB |
 
@@ -68,7 +68,7 @@ of host RAM is ample.
 
 | File | Size |
 |---|---|
-| `_fields.nc`: 14 variables × 34.1 M cells × 4 B per daily snapshot, 5 snapshots | ≈ 2 GB each, ≈ 10 GB total |
+| `_fields.nc`: 14 variables × 30.4 M cells × 4 B per daily snapshot, 5 snapshots | ≈ 2 GB each, ≈ 10 GB total |
 | `_surface.nc`: hourly, about 96 snapshots | ≈ 3 GB |
 | `_profiles.nc` | < 10 MB |
 | Checkpoint (JLD2, only the latest kept) | a few GB |
@@ -121,6 +121,16 @@ the surface-flux boundary conditions before moving it to the GPU, so GPU runs fa
 isbits" (CPU lookup tables inside a GPU kernel). Building P3 on the GPU first avoids that; on CPU
 it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
 
+### Vertical grid above 18 km (driver)
+
+The driver (`monsoon_convection.jl`, `stretched_top_faces`) keeps CM1's levels up to 18 km. Above
+that, Δz increases linearly from 500 m to about 1 km at the 28 km lid: 58 levels instead of
+CM1's 65. The tropopause region (cold point ~16–17 km) stays at 500 m. The coarser
+stratosphere and sponge improve the conditioning of the pressure solve for the longest
+horizontal waves (∝ Δz², ~4× at the top) and save ~11% of the cells. This is like Breeze's
+TC-world RCE grid (1 km at a 28 km lid). Set `Δz_top` in the driver, or pass
+`z_faces = MonsoonConvection.cm1_z_faces()` to `build_model` for CM1's original 65 levels.
+
 ### 3. Float64 by default, also on GPU (numerical precision)
 
 Breeze GPU examples typically run in Float32. This case runs in **Float64** by default
@@ -140,7 +150,7 @@ Breeze GPU examples typically run in Float32. This case runs in **Float64** by d
   longest horizontal waves under a tall, strongly stratified column: roughly (k Δz)⁻² ≈ 3×10⁴ for
   a 512 km wave with Δz = 500 m. Float32 keeps only ~7 digits. Breeze's own TC-world RCE example
   (288 km, Δz = 1000 m at the top, about 13× better conditioned) runs in Float32.
-- **Cost.** Twice the memory (≈ 34 GiB, see "Model domain and resources") and somewhat slower on
+- **Cost.** Twice the memory (≈ 30 GiB, see "Model domain and resources") and somewhat slower on
   GPU. A mixed-precision option (Float32 model, Float64 pressure solve) would be a candidate
   optimization, and an upstream suggestion for Breeze.
 
@@ -492,7 +502,7 @@ These are the failures met while setting up the cluster, with causes and fixes:
   instability on the full domain. Run in Float64 (the default; check that `--float=Float32` isn't
   set). See "Changes to Breeze defaults", 3.
 - **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
-  for the full domain (≈ 34 GiB of model state in Float64). Request a larger GPU type, or reduce `Nx`,
+  for the full domain (≈ 30 GiB of model state in Float64). Request a larger GPU type, or reduce `Nx`,
   `Ny` in the driver.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
   (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at
