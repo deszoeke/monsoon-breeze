@@ -134,6 +134,8 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--restart` | off | Continue from the latest checkpoint in the current directory (see Restarts). |
 | `--stop_time=96h` | 345700 s ≈ 96 h (CM1 `timax`); 1 h with `--small_test` | **Total** simulated time, counted from the start of the original run. Units: `d`, `h`, `min`, `s`. |
 | `--wall_time=47h` | none | Real (wall-clock) time limit for this job. The run stops cleanly and writes a checkpoint. |
+| `--sponge=w\|all` | `w` | Upper sponge above 20 km. `w` damps only w (CM1 `irdamp = 2`). `all` also relaxes u, v and θ toward the initial sounding (CM1 `irdamp = 1`). See Troubleshooting (instability under the lid). |
+| `--sponge_timescale=300s` | 300 s (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
 | `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or
@@ -465,6 +467,12 @@ These are the failures met while setting up the cluster, with causes and fixes:
   `maximum_diffusivity = 100` m² s⁻¹, playing the role of CM1's `l_inf = 75 m`. Normal maxima are
   ~40 m² s⁻¹ in the boundary layer. To change the cap, pass e.g. `maximum_diffusivity = 50` to
   `build_model` in the driver.
+- **Growing temperature oscillation in the top cell (full domain only)**: with `--debug_nan`, the
+  "top cell T" range grows exponentially (spread doubling every ~100 s of model time from
+  about iteration 100). Max `Kᵘ` then pins at the cap at 27.5 km and P3 ice number turns NaN
+  above 23 km around iteration 240. It does not occur on the 16 × 8 km test domain, on CPU or
+  GPU. The w-only sponge (1/300 s) is slower than the growth (~0.01 s⁻¹). Try
+  `--sponge=all --sponge_timescale=60s`, which also relaxes u, v, θ in the sponge layer.
 - **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
   for the full domain (≈ 17 GiB of model state). Request a larger GPU type, or reduce `Nx`,
   `Ny` in the driver.

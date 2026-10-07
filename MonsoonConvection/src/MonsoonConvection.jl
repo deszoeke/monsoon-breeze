@@ -20,7 +20,7 @@ using Breeze
 using Breeze: BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux
 using Oceananigans
 using Oceananigans.Units
-using Oceananigans.Grids: znodes
+using Oceananigans.Grids: znodes, znode
 using Oceananigans.TimeSteppers: update_state!
 using Oceananigans.Architectures: on_architecture
 
@@ -134,6 +134,19 @@ end
 @inline (m::SinSquaredMask)(x, y, z) =
     ifelse(z > m.bottom, sin(π / 2 * (z - m.bottom) / (m.top - m.bottom))^2, zero(z))
 
+# Sponge relaxation of ρu, ρv, ρθ toward the initial state (CM1 irdamp = 1), used when
+# sponge_variables = :all. p.target is a (Nothing, Nothing, Center) column of the initial values.
+@inline sponge_strength(i, j, k, grid, p) = p.rate * p.mask(0, 0, znode(i, j, k, grid, Center(), Center(), Center()))
+
+@inline sponge_ρu(i, j, k, grid, clock, model_fields, p) =
+    @inbounds - sponge_strength(i, j, k, grid, p) * (model_fields.ρu[i, j, k] - p.target[1, 1, k])
+
+@inline sponge_ρv(i, j, k, grid, clock, model_fields, p) =
+    @inbounds - sponge_strength(i, j, k, grid, p) * (model_fields.ρv[i, j, k] - p.target[1, 1, k])
+
+@inline sponge_ρθ(i, j, k, grid, clock, model_fields, p) =
+    @inbounds - sponge_strength(i, j, k, grid, p) * (model_fields.ρθ[i, j, k] - p.target[1, 1, k])
+
 @inline function tropical_ozone(z)
     troposphere_O₃ = 30e-9 * (1 + 0.5 * z / 10_000)
     zˢᵗ = 25e3
@@ -186,7 +199,8 @@ function build_model(sounding::Sounding;
                      gustiness = 1,
                      coriolis_parameter = 2.53252496e-5, # CM1 fcor (10°N)
                      sponge_bottom = 20000,             # CM1 zd
-                     sponge_rate = 1/300,               # CM1 rdalpha (irdamp = 2: w only)
+                     sponge_rate = 1/300,               # CM1 rdalpha, s⁻¹
+                     sponge_variables = :w,             # :w (CM1 irdamp = 2) or :all (u, v, w, θ; irdamp = 1)
                      surface_albedo = 0.08,             # from cm1.print.out
                      solar_constant = 650.83,           # perpetual sun, from cm1.print.out
                      cos_zenith = 0.6360782,
@@ -233,11 +247,28 @@ function build_model(sounding::Sounding;
     ρu_forcing = Forcing(geostrophic_u_forcing; discrete_form=true, parameters=geostrophic_parameters)
     ρv_forcing = Forcing(geostrophic_v_forcing; discrete_form=true, parameters=geostrophic_parameters)
 
-    # Upper Rayleigh damping of w (CM1 irdamp = 2)
+    # Upper sponge above sponge_bottom, rate sponge_rate × sin² ramp:
+    #   :w   damps w toward 0 (CM1 irdamp = 2)
+    #   :all also relaxes ρu, ρv, ρθ toward the initial sounding (CM1 irdamp = 1). On the full
+    #        domain, an instability grew in the top cell (T spread doubling every ~100 s) that
+    #        damping w alone at 1/300 s did not stop.
     mask = SinSquaredMask(FT(sponge_bottom), FT(last(z_faces)))
     ρw_sponge = Relaxation(rate = sponge_rate, mask = mask)
 
-    forcing = (; ρu=ρu_forcing, ρv=ρv_forcing, ρw=ρw_sponge)
+    forcing = if sponge_variables === :w
+        (; ρu=ρu_forcing, ρv=ρv_forcing, ρw=ρw_sponge)
+    elseif sponge_variables === :all
+        ρᵣ = vec(Array(interior(reference_state.density)))
+        column(values) = (f = Field{Nothing, Nothing, Center}(grid); set!(f, reshape(FT.(values), 1, 1, Nz)); f)
+        ρu₀ = column(ρᵣ .* ū.(Ref(s), zᶜ))
+        ρv₀ = column(ρᵣ .* v̄.(Ref(s), zᶜ))
+        ρθ₀ = column(ρᵣ .* θ̄.(Ref(s), zᶜ))
+        sponge(f, target) = Forcing(f; discrete_form=true, parameters=(; rate=FT(sponge_rate), mask, target))
+        (; ρu=(ρu_forcing, sponge(sponge_ρu, ρu₀)), ρv=(ρv_forcing, sponge(sponge_ρv, ρv₀)),
+           ρw=ρw_sponge, ρθ=sponge(sponge_ρθ, ρθ₀))
+    else
+        throw(ArgumentError("sponge_variables must be :w or :all, got $sponge_variables"))
+    end
 
     # Bulk surface fluxes over fixed SST (CM1 sfcmodel = 1, oceanmodel = 1)
     Tˢ = sea_surface_temperature

@@ -54,6 +54,9 @@
 #   --wall_time=47h       real (wall-clock) time limit for this job. The run stops cleanly
 #                         and writes a checkpoint; continue it with --restart. Set it a
 #                         little below the batch job's time limit. Default: none.
+#   --sponge=w|all        upper sponge (above 20 km): w = damp w only (CM1 irdamp = 2, default);
+#                         all = also relax u, v, θ toward the initial sounding (irdamp = 1)
+#   --sponge_timescale=300s  sponge damping time scale at the top (default 300 s, CM1 rdalpha)
 #   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
 #                         in any prognostic field, reporting the field and grid location.
 #
@@ -93,7 +96,8 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 
 # Check the flags and the requested hardware before loading any package, so mistakes fail fast.
 flags = try
-    flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan"))
+    flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
+                               "sponge", "sponge_timescale"))
     for name in ("small_test", "restart", "debug_nan")
         get(flags, name, "true") == "true" || error("--$name takes no value")
     end
@@ -101,6 +105,8 @@ flags = try
     get(flags, "float", "Float32") in ("Float32", "Float64") || error("--float must be Float32 or Float64")
     haskey(flags, "stop_time") && parse_duration(flags["stop_time"])
     haskey(flags, "wall_time") && parse_duration(flags["wall_time"])
+    get(flags, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
+    haskey(flags, "sponge_timescale") && parse_duration(flags["sponge_timescale"])
     get(flags, "arch", "cpu") == "gpu" && require_gpu()
     flags
 catch err
@@ -157,7 +163,11 @@ Nx, Ny = small_test ? (32, 16) : (1024, 512)
 #                 sea_surface_temperature = 302, CO₂ = 420e-6, sponge_bottom = 18000)
 # Pass z_faces as a Vector{Float64} (collect a range): a range is a different type and would
 # compile a different grid.
-model = build_model(sounding; arch, Nx, Ny)
+# Upper sponge (--sponge, --sponge_timescale): default CM1 irdamp = 2, rdalpha = 1/300 s
+sponge_variables = Symbol(get(flags, "sponge", "w"))
+sponge_rate = 1 / parse_duration(get(flags, "sponge_timescale", "300s"))
+
+model = build_model(sounding; arch, Nx, Ny, sponge_variables, sponge_rate)
 
 #####
 ##### Initial conditions (CM1 irandp = 1: ±0.25 K random θ perturbations)
@@ -235,8 +245,13 @@ if haskey(flags, "debug_nan")
                     T, zT, 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ), K, zK)
             @printf("    top cell T ∈ [%.2f, %.2f] K, max nⁱ = %.3g /kg at z = %.0f m, Fᴿ ∈ [%.3g at z = %.0f m, %.3g at z = %.0f m] W/m³\n",
                     minimum(Tᵗᵒᵖ), maximum(Tᵗᵒᵖ), nⁱ, znⁱ, F⁻, zF⁻, F⁺, zF⁺)
-            @printf("    max|w| above 20 km = %.3g m/s at z = %.0f m, faces with Kᵘ at the cap: %d\n",
-                    wᵘᵖ, zw[upper[Iᵘᵖ[3]]], ncap)
+            # horizontal wavelength of the top-cell T anomaly, from sign changes along x
+            Tᵃ = Tᵗᵒᵖ .- sum(Tᵗᵒᵖ) / length(Tᵗᵒᵖ)
+            nx = size(Tᵃ, 1)
+            crossings = sum(count(i -> sign(Tᵃ[i, j]) != sign(Tᵃ[mod1(i + 1, nx), j]), 1:nx) for j in axes(Tᵃ, 2)) / size(Tᵃ, 2)
+            λ = crossings > 0 ? 2 * m.grid.Lx / crossings / 1e3 : Inf
+            @printf("    max|w| above 20 km = %.3g m/s at z = %.0f m, faces with Kᵘ at the cap: %d, top-cell T anomaly wavelength ≈ %.1f km\n",
+                    wᵘᵖ, zw[upper[Iᵘᵖ[3]]], ncap, λ)
         end
         all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
 
