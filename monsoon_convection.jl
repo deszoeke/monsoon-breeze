@@ -60,6 +60,11 @@
 #   --sponge=w|all        upper sponge (above 20 km): w = damp w only (CM1 irdamp = 2, default);
 #                         all = also relax u, v, θ toward the initial sounding (irdamp = 1)
 #   --sponge_timescale=300s  sponge damping time scale at the top (default 300 s, CM1 rdalpha)
+#   --pressure_solver=Float32|Float64
+#                         precision of the anelastic pressure solve (default: same as --float).
+#                         E.g. --float=Float32 --pressure_solver=Float64 runs the model in Float32
+#                         with a Float64 pressure solve, which is stable on the full domain
+#                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
 #   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
 #                         in any prognostic field, reporting the field and grid location.
 #
@@ -99,19 +104,20 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 
 # Check the flags and the requested hardware before loading any package, so mistakes fail fast.
 flags = try
-    flags = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
-                               "sponge", "sponge_timescale"))
+    f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
+                               "sponge", "sponge_timescale", "pressure_solver"))
     for name in ("small_test", "restart", "debug_nan")
-        get(flags, name, "true") == "true" || error("--$name takes no value")
+        get(f, name, "true") == "true" || error("--$name takes no value")
     end
-    get(flags, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
-    get(flags, "float", "Float32") in ("Float32", "Float64") || error("--float must be Float32 or Float64")
-    haskey(flags, "stop_time") && parse_duration(flags["stop_time"])
-    haskey(flags, "wall_time") && parse_duration(flags["wall_time"])
-    get(flags, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
-    haskey(flags, "sponge_timescale") && parse_duration(flags["sponge_timescale"])
-    get(flags, "arch", "cpu") == "gpu" && require_gpu()
-    flags
+    get(f, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
+    get(f, "float", "Float32") in ("Float32", "Float64") || error("--float must be Float32 or Float64")
+    get(f, "pressure_solver", "Float64") in ("Float32", "Float64") || error("--pressure_solver must be Float32 or Float64")
+    haskey(f, "stop_time") && parse_duration(f["stop_time"])
+    haskey(f, "wall_time") && parse_duration(f["wall_time"])
+    get(f, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
+    haskey(f, "sponge_timescale") && parse_duration(f["sponge_timescale"])
+    get(f, "arch", "cpu") == "gpu" && require_gpu()
+    f
 catch err
     println(stderr, "ERROR: ", sprint(showerror, err), "\nUsage: see the header of monsoon_convection.jl")
     exit(1)
@@ -129,6 +135,15 @@ using Oceananigans.Units
 Oceananigans.defaults.FloatType = get(flags, "float", "Float64") == "Float32" ? Float32 : Float64
 
 using MonsoonConvection
+
+# Pressure-solve precision different from the model's: override Breeze's solver construction
+# for this session (see helpers/pressure_solver_precision.jl).
+let model_FT = string(Oceananigans.defaults.FloatType), solver_FT = get(flags, "pressure_solver", model_FT)
+    if solver_FT != model_FT
+        include(joinpath(@__DIR__, "helpers", "pressure_solver_precision.jl"))
+        Base.invokelatest(() -> (Main.pressure_solver_float_type[] = solver_FT == "Float64" ? Float64 : Float32))
+    end
+end
 
 arch = on_gpu ? GPU() : CPU()
 

@@ -28,6 +28,7 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | `check_gpu.jl` | Staged check that a GPU node can run the model (CUDA, GPU context, model steps on the GPU); `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs on partition `ceoas-gpu`; output goes to `run/` by default. |
 | `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
+| `helpers/pressure_solver_precision.jl` | Run-time override that gives the pressure solve its own precision (`--pressure_solver`); a stopgap until Breeze offers this. |
 | `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
 | `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
 | `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
@@ -146,13 +147,21 @@ Breeze GPU examples typically run in Float32. This case runs in **Float64** by d
   (`--sponge=all --sponge_timescale=60s`) only delays it, to ~1.7 h.
 - **Float64 removes it.** Full domain on GPU at 500 m, 3 h: the top-cell spread stays below
   0.7 K, structure ~20 km, no cap, no NaN. The same holds on CPU at 4 km.
-- **Likely cause (not proven).** The anelastic pressure solve is poorly conditioned for the
+- **Cause: the Float32 anelastic pressure solve (confirmed).** A Float32 model with a Float64
+  pressure solve is stable and matches all-Float64. A Float64 model with a Float32 pressure solve
+  fails like all-Float32 (4 km test domain on CPU). The solve is poorly conditioned for the
   longest horizontal waves under a tall, strongly stratified column: roughly (k Δz)⁻² ≈ 3×10⁴ for
-  a 512 km wave with Δz = 500 m. Float32 keeps only ~7 digits. Breeze's own TC-world RCE example
-  (288 km, Δz = 1000 m at the top, about 13× better conditioned) runs in Float32.
+  a 512 km wave with Δz = 500 m, while Float32 keeps only ~7 digits. Breeze's TC-world RCE
+  example (288 km, Δz = 1000 m at the top, about 13× better conditioned) runs in Float32. Draft
+  issue: `breeze_issue_pressure_precision.md`.
 - **Cost.** Twice the memory (≈ 30 GiB, see "Model domain and resources") and somewhat slower on
-  GPU. A mixed-precision option (Float32 model, Float64 pressure solve) would be a candidate
-  optimization, and an upstream suggestion for Breeze.
+  GPU.
+- **Mixed precision.** `--float=Float32 --pressure_solver=Float64` runs the model in Float32 with
+  only the pressure solve in Float64 (`helpers/pressure_solver_precision.jl`). It is stable on the
+  full domain, with Float32 memory and speed elsewhere. It works by redefining Breeze's solver
+  construction for the session (written against Breeze 0.11.3; it warns on other versions), so
+  it's a stopgap until Breeze has such an option. It has been tested on CPU; check it on the
+  GPU before production use.
 
 The `--sponge=all` option (relax u, v, θ in the sponge layer, CM1 `irdamp = 1`) remains available,
 but is not needed in Float64.
@@ -173,6 +182,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--wall_time=47h` | none | Real (wall-clock) time limit for this job. The run stops cleanly and writes a checkpoint. |
 | `--sponge=w\|all` | `w` | Upper sponge above 20 km. `w` damps only w (CM1 `irdamp = 2`). `all` also relaxes u, v and θ toward the initial sounding (CM1 `irdamp = 1`). See Troubleshooting (instability under the lid). |
 | `--sponge_timescale=300s` | 300 s (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
+| `--pressure_solver=Float32\|Float64` | same as `--float` | Precision of the anelastic pressure solve only. `--float=Float32 --pressure_solver=Float64` is stable on the full domain (see "Changes to Breeze defaults", 3). |
 | `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or
