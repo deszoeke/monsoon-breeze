@@ -42,7 +42,9 @@
 #                         (NVIDIA device, CUDA working) before any package is loaded, and
 #                         the run halts if the GPU is unavailable.
 #   --float=Float32|Float64
-#                         floating-point precision (default Float32 on gpu, Float64 on cpu).
+#                         floating-point precision (default Float64, on CPU and GPU). Float32 is
+#                         unstable on the full 512 km domain: a domain-scale temperature mode in
+#                         the top cell grows until the run fails (see README).
 #                         Single precision is standard for GPU runs of this kind.
 #   --small_test          32×16 columns (16 km × 8 km), 1 h: a quick check that the code
 #                         runs, not a scientific configuration.
@@ -123,7 +125,7 @@ wall_time_limit = haskey(flags, "wall_time") ? parse_duration(flags["wall_time"]
 using Oceananigans
 using Oceananigans.Units
 
-Oceananigans.defaults.FloatType = get(flags, "float", on_gpu ? "Float32" : "Float64") == "Float32" ? Float32 : Float64
+Oceananigans.defaults.FloatType = get(flags, "float", "Float64") == "Float32" ? Float32 : Float64
 
 using MonsoonConvection
 

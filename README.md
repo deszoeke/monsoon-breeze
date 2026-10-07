@@ -47,19 +47,18 @@ julia --project=../.. ../../monsoon_convection.jl --small_test
 | Time step | adaptive, CFL 0.7, at most 15 s (≈ 8 s in the 1 h tests, before deep convection) | same |
 | Time steps | roughly 25,000–45,000 | ≈ 570 |
 
-**Memory.** The model plus simulation state takes about 111 Float32 3D arrays, about 444 bytes
-per grid cell including halos. This was measured with `Base.summarysize` at 32×16 and 64×64 and
+**Memory.** The model plus simulation state takes about 111 3D arrays: about 444 bytes per grid
+cell including halos in Float32, twice that in Float64 (the default). This was measured with `Base.summarysize` at 32×16 and 64×64 and
 extrapolated linearly:
 
 | Configuration | Model state |
 |---|---|
-| Full run, Float32 (GPU default) | **≈ 17 GiB** of GPU memory |
-| Full run, Float64 | ≈ 34 GiB |
+| Full run, Float64 (default) | **≈ 34 GiB** of GPU memory |
+| Full run, Float32 (unstable on this domain) | ≈ 17 GiB |
 | `--small_test`, Float32 (measured) | ≈ 54 MiB |
 
-Allow headroom for the CUDA context and temporary arrays. A GPU with **at least 24 GB** should
-be enough, and 40–80 GB (A100, H100, L40S) is comfortable. A 16 GB GPU will not hold the full
-domain.
+Allow headroom for the CUDA context and temporary arrays. In Float64 the full domain needs a GPU
+with **at least 48 GB**; the A100 80 GB is comfortable.
 
 These are estimates; check them with `nvidia-smi` during the first GPU run. Host memory needs
 are modest. Output is copied to the host before writing (≈ 2 GB per 3D snapshot), so 32–64 GB
@@ -80,11 +79,12 @@ laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size
 
 ## Changes to Breeze defaults
 
-`MonsoonConvection` departs from Breeze's defaults in two places. Both are in `build_model`
-(`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section) and should be kept in mind when
-interpreting results or comparing with other Breeze runs.
+`MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Items 1
+and 2 are in `build_model` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
+item 3 is the driver's default precision. Keep them in mind when interpreting results or comparing
+with other Breeze runs.
 
-### 1. TKE closure: eddy diffusivities capped at 100 m² s⁻¹ (physics change)
+### 1. TKE closure: eddy diffusivities capped at 100 m² s⁻¹ (safeguard; physics change only when active)
 
 ```julia
 closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
@@ -97,9 +97,10 @@ closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
   to z, the height above the ground. A locally unstable layer aloft therefore gets ℓ of order
   10–20 km, and K = Sᵘ ℓ √e of order 10⁴–10⁵ m² s⁻¹. Breeze's default caps are infinite.
 - **What happened.** In the first full-domain GPU run, max Kᵘ jumped from ~40 to 3×10⁴ m² s⁻¹
-  at iteration ~215, reached 1.2×10⁵ by iteration 250, and the run failed with NaN at iteration
-  257. The NaN first appeared in P3 ice number and fall speeds at 20.75–28 km (found with
-  `--debug_nan`). Small-domain CPU runs never ran away: max Kᵘ stayed ≤ 27 m² s⁻¹ and decayed.
+  at iteration ~215, and the run failed with NaN at iteration 257. This turned out to be a
+  **symptom** of the Float32 instability in item 3: the top cell became unstable and the closure
+  responded with ℓ = z. In Float64 the cap never engages (max Kᵘ ≲ 50 m² s⁻¹, in the boundary
+  layer). The cap stays as a safeguard against any unstable layer aloft.
 - **Relation to CM1.** CM1's PBL scheme (`ipbl = 2`) limits the mixing length with
   `l_inf = 75 m` (namelist), which keeps K ≲ 50 m² s⁻¹ for typical TKE. The cap is the closest
   available substitute, since Breeze's closure has no mixing-length limit. It caps K, not ℓ, so it
@@ -120,6 +121,32 @@ the surface-flux boundary conditions before moving it to the GPU, so GPU runs fa
 isbits" (CPU lookup tables inside a GPU kernel). Building P3 on the GPU first avoids that; on CPU
 it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
 
+### 3. Float64 by default, also on GPU (numerical precision)
+
+Breeze GPU examples typically run in Float32. This case runs in **Float64** by default
+(`--float=Float64`), because Float32 is unstable on the full 512 × 256 km domain:
+
+- **Symptom.** In Float32 the temperature in the top grid cell (27.5–28 km) develops a
+  domain-scale pattern (wavelength ≈ the 512 km domain) that grows exponentially, by e-folds of
+  ~100 s with the default w-only sponge. It becomes visible about 10–15 simulated minutes in.
+  K then pins at the cap at 27.5 km, and the run ends in NaN in P3 ice number above 23 km
+  (iteration ~240, ~16 min).
+- **What it is not.** It is the same on CPU and GPU, and the same at 500 m and 4 km grid
+  spacing on the full domain. It is absent on the 16 × 8 km test domain. A stronger sponge
+  (`--sponge=all --sponge_timescale=60s`) only delays it, to ~1.7 h.
+- **Float64 removes it.** Full domain on GPU at 500 m, 3 h: the top-cell spread stays below
+  0.7 K, structure ~20 km, no cap, no NaN. The same holds on CPU at 4 km.
+- **Likely cause (not proven).** The anelastic pressure solve is poorly conditioned for the
+  longest horizontal waves under a tall, strongly stratified column: roughly (k Δz)⁻² ≈ 3×10⁴ for
+  a 512 km wave with Δz = 500 m. Float32 keeps only ~7 digits. Breeze's own TC-world RCE example
+  (288 km, Δz = 1000 m at the top, about 13× better conditioned) runs in Float32.
+- **Cost.** Twice the memory (≈ 34 GiB, see "Model domain and resources") and somewhat slower on
+  GPU. A mixed-precision option (Float32 model, Float64 pressure solve) would be a candidate
+  optimization, and an upstream suggestion for Breeze.
+
+The `--sponge=all` option (relax u, v, θ in the sponge layer, CM1 `irdamp = 1`) remains available,
+but is not needed in Float64.
+
 ## Running the model
 
 ```sh
@@ -129,7 +156,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | Flag | Default | Meaning |
 |---|---|---|
 | `--arch=cpu\|gpu` | `cpu` | Hardware to run on. A `gpu` request is checked (NVIDIA device present, CUDA working) before any package loads; if unavailable the run stops immediately and nothing is changed. |
-| `--float=Float32\|Float64` | Float32 on GPU, Float64 on CPU | Floating-point precision. Single precision is standard for GPU runs of this kind. The precompile warm-up covers CPU Float64 runs. |
+| `--float=Float32\|Float64` | Float64 | Floating-point precision. **Float32 is unstable on the full 512 km domain** (see "Changes to Breeze defaults", 3); use it only for small domains. |
 | `--small_test` | off | 32×16 columns (16 km × 8 km), 1 h. A check that the code runs, not a scientific configuration. |
 | `--restart` | off | Continue from the latest checkpoint in the current directory (see Restarts). |
 | `--stop_time=96h` | 345700 s ≈ 96 h (CM1 `timax`); 1 h with `--small_test` | **Total** simulated time, counted from the start of the original run. Units: `d`, `h`, `min`, `s`. |
@@ -392,7 +419,7 @@ Notes:
   settings the job would inherit.
 
 **GPU startup.** The precompiled code covers the CPU side. GPU jobs compile their GPU-specific
-code (Float32 methods and CUDA kernels) at startup, which takes a few minutes and is part of
+code (GPU-specific methods and CUDA kernels) at startup, which takes a few minutes and is part of
 the 1 h margin between `WALL_TIME` and `--time`.
 
 ## Writing a new experiment
@@ -460,21 +487,12 @@ These are the failures met while setting up the cluster, with causes and fixes:
   the precompile, which needs about 6 GB. Login nodes usually allow less, and a multi-target
   `JULIA_CPU_TARGET` multiplies the need. Precompile with `sbatch precompile_job.sh` (32 GB),
   and use the single target `JULIA_CPU_TARGET="haswell,-rdrnd"`.
-- **NaN after a few hundred steps, with `--debug_nan` showing max `Kᵘ` jumping from ~40 to
-  10⁴–10⁵ m² s⁻¹, then NaN in ice number (`nⁱ`) above 20 km**: runaway eddy diffusivity. The
-  TKE closure's mixing length is ℓ = min(z, Cᴺ√e/N), so wherever N² ≤ 0 aloft it becomes the
-  height above the ground (~20 km). `build_model` therefore caps the closure's diffusivities at
-  `maximum_diffusivity = 100` m² s⁻¹, playing the role of CM1's `l_inf = 75 m`. Normal maxima are
-  ~40 m² s⁻¹ in the boundary layer. To change the cap, pass e.g. `maximum_diffusivity = 50` to
-  `build_model` in the driver.
-- **Growing temperature oscillation in the top cell (full domain only)**: with `--debug_nan`, the
-  "top cell T" range grows exponentially (spread doubling every ~100 s of model time from
-  about iteration 100). Max `Kᵘ` then pins at the cap at 27.5 km and P3 ice number turns NaN
-  above 23 km around iteration 240. It does not occur on the 16 × 8 km test domain, on CPU or
-  GPU. The w-only sponge (1/300 s) is slower than the growth (~0.01 s⁻¹). Try
-  `--sponge=all --sponge_timescale=60s`, which also relaxes u, v, θ in the sponge layer.
+- **NaN in P3 ice number above 23 km after ~15 min (or later), preceded by a growing top-cell
+  temperature spread and max `Kᵘ` at the cap at 27.5 km** (`--debug_nan`): the Float32
+  instability on the full domain. Run in Float64 (the default; check that `--float=Float32` isn't
+  set). See "Changes to Breeze defaults", 3.
 - **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
-  for the full domain (≈ 17 GiB of model state). Request a larger GPU type, or reduce `Nx`,
+  for the full domain (≈ 34 GiB of model state in Float64). Request a larger GPU type, or reduce `Nx`,
   `Ny` in the driver.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
   (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at
