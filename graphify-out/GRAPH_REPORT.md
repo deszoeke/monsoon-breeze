@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `29d6b2e7`
+- Built from commit: `35a45726`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -65,7 +65,7 @@
 
 ### Community 0 - "MonsoonConvection"
 Cohesion: 0.10
-Nodes (16): Breeze.AtmosphereModels, Logging, Breeze, Oceananigans, Oceananigans.Architectures, Oceananigans.Grids, Oceananigans.TimeSteppers, Oceananigans.Units (+8 more)
+Nodes (16): Breeze, Breeze.AtmosphereModels, Logging, Oceananigans, Oceananigans.Grids, Oceananigans.Units, Printf, MonsoonConvection (+8 more)
 
 ### Community 1 - "Monsoon convection in Breeze.jl"
 Cohesion: 0.10
@@ -73,7 +73,7 @@ Nodes (19): 1. TKE closure: eddy diffusivities capped at 100 m² s⁻¹ (safegua
 
 ### Community 2 - "monsoon_convection.jl"
 Cohesion: 0.18
-Nodes (6): MonsoonConvection, Oceananigans, Oceananigans.Grids, Oceananigans.Units, Printf, Oceananigans.Advection
+Nodes (6): Oceananigans, Oceananigans.Grids, Oceananigans.Units, Printf, MonsoonConvection, Oceananigans.Advection
 
 ### Community 3 - "P3 lookup tables stay on the CPU inside surface-flux boundary conditions → "not isbits" KernelError on GPU"
 Cohesion: 0.22
@@ -120,7 +120,7 @@ Cohesion: 0.50
 Nodes (4): sponge_strength(), sponge_ρu(), sponge_ρv(), sponge_ρθ()
 
 ## Knowledge Gaps
-- **71 isolated node(s):** `Breeze`, `Oceananigans`, `Oceananigans.Units`, `Oceananigans.Grids`, `Oceananigans.TimeSteppers` (+66 more)
+- **71 isolated node(s):** `graphify`, `Breeze`, `Oceananigans`, `Oceananigans.Units`, `Oceananigans.Grids` (+66 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 91 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -129,7 +129,7 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `MonsoonConvection` connect `MonsoonConvection` to `build_simulation`, `build_model`, `sponge_strength`, `run_workload`?**
   _High betweenness centrality (0.108) - this node is a cross-community bridge._
-- **What connects `Breeze`, `Oceananigans`, `Oceananigans.Units` to the rest of the system?**
+- **What connects `graphify`, `Breeze`, `Oceananigans` to the rest of the system?**
   _71 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `MonsoonConvection` be split into smaller, more focused modules?**
   _Cohesion score 0.09523809523809523 - nodes in this community are weakly interconnected._

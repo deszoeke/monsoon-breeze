@@ -35,4 +35,6 @@ export CUDA_VISIBLE_DEVICES=$gpu
 mkdir -p "$RUN" && cd "$RUN"
 echo "job $SLURM_JOB_ID on $(hostname), GPU $gpu, $(julia --version), run directory $PWD"
 
-julia --project="$REPO" "$REPO/monsoon_convection.jl" --arch=gpu --wall_time="$WALL_TIME" "$@"
+cmd=(julia --project="$REPO" "$REPO/monsoon_convection.jl" --arch=gpu --wall_time="$WALL_TIME" "$@")
+echo "command: ${cmd[*]}"
+"${cmd[@]}"
