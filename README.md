@@ -81,8 +81,8 @@ laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size
 
 ## Changes to Breeze defaults
 
-`MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Items 1
-and 2 are in `build_model` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
+`MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Items 1,
+2 and 4 are in `build_model` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
 item 3 is the driver's default precision. Keep them in mind when interpreting results or comparing
 with other Breeze runs.
 
@@ -168,6 +168,44 @@ on CPU everything is Float64.
 The `--sponge=all` option (relax u, v, θ in the sponge layer, CM1 `irdamp = 1`) remains available,
 but is not needed in Float64.
 
+### 4. Bounded (positivity-preserving) WENO scalar advection
+
+Every advected scalar uses `WENO(order=5, bounds=(min, max))` (`build_model`, keyword
+`bounded_scalar_advection = true`; bounds in `MonsoonConvection.scalar_bounds`). Breeze's default
+is unbounded WENO(5).
+
+- **Why.** Unbounded WENO can undershoot below zero at sharp edges, such as updraft and cloud
+  edges. Negative moisture, hydrometeor or number values can then make P3 produce NaN. The
+  first full-domain mixed-precision run failed with NaN at 17.5 h, at the onset of deep
+  convection. Breeze's TC-world RCE example, which runs strong convection in Float32, bounds its
+  moisture the same way. In a forced-condensation test, unbounded advection gave cloud and rain
+  minima of about −10⁻¹⁴; bounded advection keeps them at exactly 0. The physics is otherwise the
+  same.
+- **How.** Oceananigans' Zhang–Shu (2010) limiter (marked experimental) scales each cell's
+  reconstructions toward the cell mean, so that advection keeps the **specific** value
+  (kg/kg, K, per kg; Breeze divides by ρ) inside the bounds. Every field is named, because any
+  field left out of the NamedTuple would fall back to second-order `Centered` advection.
+
+  | Fields | Quantity | Bounds |
+  |---|---|---|
+  | `ρqᵛ`, `ρqᶜˡ`, `ρqʳ`, `ρqⁱ`, `ρqᶠ`, `ρqʷⁱ` | mass fractions | (0, 1) |
+  | `ρnʳ`, `ρnⁱ` | number per kg | (0, 10²⁰) |
+  | `ρbᶠ` | rime volume per kg (m³ kg⁻¹) | (0, 1) |
+  | `ρe` | TKE (m² s⁻²) | (0, 10⁶) |
+  | `ρθ` | liquid-ice potential temperature (K) | (150, 2000) |
+
+  Upper bounds are physical maxima, chosen loose so they never clip real values. The limiter acts
+  only where a reconstruction would leave the bounds.
+- **Not a strict guarantee here.** The limiter is guaranteed only for total Courant number
+  ≤ 5/18. We run at CFL 0.7, as Breeze's TC world does, which removes most undershoots but not
+  provably all.
+- **Sources must stay inside the bounds.** The limiter assumes the cell values are already
+  inside the bounds, and sources (radiation, latent heating, microphysics) can push them out. The driver checks the
+  specific range of every bounded field every 10 iterations. It warns (once per field; every
+  time with `--debug_nan`) if a field leaves its bounds, which means the limiter is unreliable
+  there.
+- **Comparing.** `--unbounded_advection` restores Breeze's unbounded WENO(5) for all scalars.
+
 ## Running the model
 
 ```sh
@@ -186,6 +224,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--sponge_timescale=300s` | 300 s (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
 | `--pressure_solver=Float32\|Float64` | Float64 | Precision of the anelastic pressure solve only. **Keep Float64:** a Float32 pressure solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
 | `--checkpoint_interval=1h` | 1 d (30 min with `--small_test`) | How often to write restart files. Only the latest is kept, and none is written when a run ends in NaN, so use a short interval to be able to restart just before a failure. |
+| `--unbounded_advection` | off | Use Breeze's unbounded WENO(5) for all scalars instead of the bounded default (see "Changes to Breeze defaults", 4). For A/B comparison. |
 | `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or

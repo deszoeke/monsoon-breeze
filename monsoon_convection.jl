@@ -65,6 +65,8 @@
 #                         Float32 model (the GPU default) this is mixed precision, about 2× faster
 #                         than all-Float64 on the A100 and as stable
 #                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
+#   --unbounded_advection plain WENO(5) for scalars instead of the default bounds-preserving
+#                         WENO (moisture, hydrometeors, numbers ≥ 0); for comparison runs.
 #   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
 #                         --small_test). Only the latest is kept, and none is written when a run
 #                         ends in NaN, so use a short interval to be able to restart just before
@@ -109,8 +111,9 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 # Check the flags and the requested hardware before loading any package, so mistakes fail fast.
 flags = try
     f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
-                               "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval"))
-    for name in ("small_test", "restart", "debug_nan")
+                               "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval",
+                               "unbounded_advection"))
+    for name in ("small_test", "restart", "debug_nan", "unbounded_advection")
         get(f, name, "true") == "true" || error("--$name takes no value")
     end
     get(f, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
@@ -208,7 +211,10 @@ end
 
 z_faces = stretched_top_faces(Δz_top = 1000)
 
-model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate)
+# Scalar advection: bounded WENO by default; --unbounded_advection for comparison
+bounded_scalar_advection = !haskey(flags, "unbounded_advection")
+
+model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate, bounded_scalar_advection)
 
 #####
 ##### Initial conditions (CM1 irandp = 1: ±0.25 K random θ perturbations)
@@ -319,6 +325,49 @@ if haskey(flags, "debug_nan")
     add_callback!(simulation, debug_nan, IterationInterval(1))
 end
 
+
+#####
+##### Check that bounded scalars stay within their advection limiter's bounds
+#####
+#
+# The bounds-preserving limiter assumes every cell value already lies within its bounds. If a
+# source (radiation, latent heating, microphysics) pushes a value outside, the limiter misbehaves.
+# Every 100 iterations (10 with --debug_nan), compare the specific value (e.g. θ = ρθ/ρᵣ,
+# q = ρq/ρᵣ) of each bounded scalar with its bounds and warn (once per field; every time with
+# --debug_nan). A relative tolerance of 1e-6 ignores round-off-level values such as -1e-18.
+
+using Oceananigans.Advection: BoundsPreservingWENO
+
+if bounded_scalar_advection
+    let m = simulation.model, debug = haskey(flags, "debug_nan")
+        bounded_names = Tuple(name for (name, scheme) in pairs(m.advection) if scheme isa BoundsPreservingWENO)
+        ρᵣ = m.dynamics.reference_state.density
+        specific = NamedTuple(name => Field(prognostic_fields(m)[name] / ρᵣ) for name in bounded_names)
+        warned = Set{Symbol}()
+
+        function check_limiter_bounds(sim)
+            for name in bounded_names
+                f = specific[name]
+                compute!(f)
+                lo, hi = m.advection[name].bounds.minimum_value, m.advection[name].bounds.maximum_value
+                fmin, fmax = minimum(f), maximum(f)
+                tolerance = 1e-6 * max(abs(fmin), abs(fmax), eps(Float32))
+                if fmin < lo - tolerance || fmax > hi + tolerance
+                    if debug || name ∉ warned
+                        @warn "$name: specific value range [$fmin, $fmax] at iteration $(iteration(sim)) " *
+                              "(t = $(prettytime(sim))) is outside its advection bounds [$lo, $hi]. The " *
+                              "bounds-preserving limiter is unreliable there: check the sources or the bounds " *
+                              "(MonsoonConvection.scalar_bounds)."
+                    end
+                    push!(warned, name)
+                end
+            end
+            return nothing
+        end
+
+        add_callback!(simulation, check_limiter_bounds, IterationInterval(10))
+    end
+end
 
 # Errors can be thousands of lines (CUDA lists every field of a non-isbits argument, and stack
 # frames print full type parameters). Keep the log short: write the whole error to error.log

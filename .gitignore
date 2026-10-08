@@ -29,3 +29,10 @@ slurm-*.out
 .idea/
 *.swp
 *~
+
+# graphify
+graphify-out/graph.html
+graphify-out/.graphify_*
+graphify-out/manifest.json
+graphify-out/cache/
+

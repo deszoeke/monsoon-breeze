@@ -23,6 +23,8 @@ using Oceananigans.Units
 using Oceananigans.Grids: znodes, znode
 using Oceananigans.TimeSteppers: update_state!
 using Oceananigans.Architectures: on_architecture
+using Oceananigans.TurbulenceClosures: closure_required_tracers
+using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names
 
 using NCDatasets  # required for RRTMGP lookup tables
 using RRTMGP
@@ -206,7 +208,8 @@ function build_model(sounding::Sounding;
                      cos_zenith = 0.6360782,
                      CO₂ = 387.75e-6,
                      radiation_interval = 300,          # CM1 dtrad
-                     maximum_diffusivity = 100)         # m² s⁻¹, cap on the TKE closure's K (see below)
+                     maximum_diffusivity = 100,         # m² s⁻¹, cap on the TKE closure's K (see below)
+                     bounded_scalar_advection = true)   # bounds-preserving WENO for all scalars (see below)
 
     FT = Oceananigans.defaults.FloatType
     s = sounding
@@ -314,10 +317,43 @@ function build_model(sounding::Sounding;
                                           maximum_tracer_diffusivity = maximum_diffusivity,
                                           maximum_tke_diffusivity = maximum_diffusivity)
 
+    # Scalar advection: WENO(5), by default with Zhang–Shu (2010) bounds (Oceananigans `bounds`,
+    # experimental) on the specific quantity of every scalar, so that strong updrafts cannot
+    # advect moisture, hydrometeors or numbers below 0 (negative values can make P3 return NaN).
+    # Every scalar is named, because names missing from a scalar_advection NamedTuple fall back
+    # to second-order Centered advection. At our CFL (0.7) the bounds are not strictly guaranteed
+    # (that needs a total Courant number ≤ 5/18), as in Breeze's TC-world example.
+    scalar_advection = if bounded_scalar_advection
+        names = (:ρθ, moisture_prognostic_name(microphysics), prognostic_field_names(microphysics)...,
+                 closure_required_tracers(closure)...)
+        NamedTuple(name => WENO(order=5, bounds=map(FT, scalar_bounds(name))) for name in names)
+    else
+        WENO(order=5)
+    end
+
     return AtmosphereModel(grid; dynamics, coriolis, microphysics, radiation, closure,
-                           forcing, boundary_conditions,
-                           momentum_advection = WENO(order=5),
-                           scalar_advection = WENO(order=5))
+                           forcing, boundary_conditions, scalar_advection,
+                           momentum_advection = WENO(order=5))
+end
+
+"""
+    scalar_bounds(name)
+
+Bounds of the specific quantity advected for the density-weighted scalar `name`:
+mass fractions (`ρq*`) in [0, 1], numbers per kg (`ρn*`) in [0, 1e20], rime volume
+(`ρbᶠ`, m³/kg) in [0, 1], TKE (`ρe`, m²/s²) in [0, 1e6] and liquid-ice potential
+temperature (`ρθ`, K) in [150, 2000]. The upper bounds are physical maxima or very loose,
+so the limiter acts essentially only at the lower bound. They must never be crossed by
+sources, or the limiter misbehaves.
+"""
+function scalar_bounds(name::Symbol)
+    str = string(name)
+    name === :ρθ             && return (150, 2000)
+    name === :ρe             && return (0, 1e6)
+    name === :ρbᶠ            && return (0, 1)
+    startswith(str, "ρq")    && return (0, 1)
+    startswith(str, "ρn")    && return (0, 1e20)
+    throw(ArgumentError("no advection bounds defined for scalar $name"))
 end
 
 """
