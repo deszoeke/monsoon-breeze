@@ -65,6 +65,10 @@
 #                         Float32 model (the GPU default) this is mixed precision, about 2× faster
 #                         than all-Float64 on the A100 and as stable
 #                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
+#   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
+#                         --small_test). Only the latest is kept, and none is written when a run
+#                         ends in NaN, so use a short interval to be able to restart just before
+#                         a failure.
 #   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
 #                         in any prognostic field, reporting the field and grid location.
 #
@@ -105,7 +109,7 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 # Check the flags and the requested hardware before loading any package, so mistakes fail fast.
 flags = try
     f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
-                               "sponge", "sponge_timescale", "pressure_solver"))
+                               "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval"))
     for name in ("small_test", "restart", "debug_nan")
         get(f, name, "true") == "true" || error("--$name takes no value")
     end
@@ -116,6 +120,7 @@ flags = try
     haskey(f, "wall_time") && parse_duration(f["wall_time"])
     get(f, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
     haskey(f, "sponge_timescale") && parse_duration(f["sponge_timescale"])
+    haskey(f, "checkpoint_interval") && parse_duration(f["checkpoint_interval"])
     get(f, "arch", "cpu") == "gpu" && require_gpu()
     f
 catch err
@@ -230,7 +235,11 @@ restart || set_initial_conditions!(model, sounding; δθ = 0.25, seed = 2023)
 #####
 
 prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
-simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix)
+# Checkpoint interval (--checkpoint_interval; default daily, CM1 rstfrq, or 30 min with --small_test)
+checkpoint_kw = haskey(flags, "checkpoint_interval") ?
+                (; checkpoint_interval = parse_duration(flags["checkpoint_interval"])) : (;)
+
+simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, checkpoint_kw...)
 
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(arch) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"

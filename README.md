@@ -185,6 +185,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--sponge=w\|all` | `w` | Upper sponge above 20 km. `w` damps only w (CM1 `irdamp = 2`). `all` also relaxes u, v and θ toward the initial sounding (CM1 `irdamp = 1`). See Troubleshooting (instability under the lid). |
 | `--sponge_timescale=300s` | 300 s (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
 | `--pressure_solver=Float32\|Float64` | Float64 | Precision of the anelastic pressure solve only. **Keep Float64:** a Float32 pressure solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
+| `--checkpoint_interval=1h` | 1 d (30 min with `--small_test`) | How often to write restart files. Only the latest is kept, and none is written when a run ends in NaN, so use a short interval to be able to restart just before a failure. |
 | `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or
