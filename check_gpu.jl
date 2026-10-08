@@ -7,8 +7,8 @@
 #
 #   1  CUDA works (NVIDIA GPU present, CUDA functional)
 #   2  a CUDA context opens on the allocated GPU (fails if it is busy or not yours); a trivial kernel
-#   3  the 32×16×65 model builds and takes two time steps in Float64, the production precision
-#      (first step compiles the GPU code)
+#   3  the 32×16×65 model builds and takes two time steps in the production precision: Float32 with
+#      a Float64 pressure solve (first step compiles the GPU code)
 #   4  monsoon_convection.jl --small_test runs 10 simulated minutes, with output and checkpoint
 
 using Printf
@@ -49,7 +49,8 @@ end
 
 using Oceananigans
 using Oceananigans.TimeSteppers: time_step!
-Oceananigans.defaults.FloatType = Float64
+Oceananigans.defaults.FloatType = Float32
+include(joinpath(@__DIR__, "helpers", "pressure_solver_precision.jl"))   # Float64 pressure solve
 using MonsoonConvection
 
 stage("3. model builds and steps on $(on_cpu ? "CPU" : "GPU")") do

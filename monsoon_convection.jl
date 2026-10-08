@@ -43,9 +43,9 @@
 #                         (NVIDIA device, CUDA working) before any package is loaded, and
 #                         the run halts if the GPU is unavailable.
 #   --float=Float32|Float64
-#                         floating-point precision (default Float64, on CPU and GPU). Float32 is
-#                         unstable on the full 512 km domain: a domain-scale temperature mode in
-#                         the top cell grows until the run fails (see README).
+#                         precision of the model (default: Float32 on GPU, Float64 on CPU). The
+#                         pressure solve runs in Float64 regardless (--pressure_solver): in Float32
+#                         it is unstable on the full 512 km domain (see README).
 #                         Single precision is standard for GPU runs of this kind.
 #   --small_test          32×16 columns (16 km × 8 km), 1 h: a quick check that the code
 #                         runs, not a scientific configuration.
@@ -61,9 +61,9 @@
 #                         all = also relax u, v, θ toward the initial sounding (irdamp = 1)
 #   --sponge_timescale=300s  sponge damping time scale at the top (default 300 s, CM1 rdalpha)
 #   --pressure_solver=Float32|Float64
-#                         precision of the anelastic pressure solve (default: same as --float).
-#                         E.g. --float=Float32 --pressure_solver=Float64 runs the model in Float32
-#                         with a Float64 pressure solve, which is stable on the full domain
+#                         precision of the anelastic pressure solve (default Float64). With a
+#                         Float32 model (the GPU default) this is mixed precision, about 2× faster
+#                         than all-Float64 on the A100 and as stable
 #                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
 #   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
 #                         in any prognostic field, reporting the field and grid location.
@@ -132,13 +132,13 @@ wall_time_limit = haskey(flags, "wall_time") ? parse_duration(flags["wall_time"]
 using Oceananigans
 using Oceananigans.Units
 
-Oceananigans.defaults.FloatType = get(flags, "float", "Float64") == "Float32" ? Float32 : Float64
+Oceananigans.defaults.FloatType = get(flags, "float", on_gpu ? "Float32" : "Float64") == "Float32" ? Float32 : Float64
 
 using MonsoonConvection
 
 # Pressure-solve precision different from the model's: override Breeze's solver construction
 # for this session (see helpers/pressure_solver_precision.jl).
-let model_FT = string(Oceananigans.defaults.FloatType), solver_FT = get(flags, "pressure_solver", model_FT)
+let model_FT = string(Oceananigans.defaults.FloatType), solver_FT = get(flags, "pressure_solver", "Float64")
     if solver_FT != model_FT
         include(joinpath(@__DIR__, "helpers", "pressure_solver_precision.jl"))
         Base.invokelatest(() -> (Main.pressure_solver_float_type[] = solver_FT == "Float64" ? Float64 : Float32))
