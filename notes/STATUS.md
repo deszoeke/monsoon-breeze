@@ -25,13 +25,13 @@ RRTMGP, 4 days on one A100 (`aerosmith`, partition `ceoas-gpu`).
 | (≥ 2 earlier runs) | mixed precision, unbounded advection | NaN ~iteration 8000 (17.5 h) |
 | `adv_bounded` (job 5751294) | restart from 7699, bounded advection, `--debug_nan` | NaN at 7934; ice number first, from k = 1 up |
 | `conv_64` | all-Float64 | still running at last check |
-| `sed_cfl` (to submit) | restart from 7699 + `--sedimentation_cfl --debug_nan` | — |
+| `sed_cfl` (submitted 2026-10-09) | restart from 7699 + `--sedimentation_cfl --debug_nan` | running |
 
 ## Next steps
 
-1. Cluster: `git pull`, `sbatch precompile_job.sh` (package changed at `eec3845`).
-2. Submit `sed_cfl` (command in `workflow.md`). Does it pass iteration 7934? Watch the "max
-   sedimentation Courant number" line.
+1. Check `sed_cfl` (submitted, precompiled): does it pass iteration 7934? Watch Δt (~3–4 s in
+   heavy precipitation) and the "max sedimentation Courant number" line (≤ ~0.7).
+2. Code graphs of Breeze/Oceananigans for analysis: `helpers/graph_package.sh` (see CLAUDE.md).
 3. Compare with `conv_64`: whether Float64 also fails at ~17.5 h tells whether precision matters.
 4. Optional: draft a Breeze issue saying AIVA leaves out the fall speeds on the anelastic path
    (`breeze_internals.md`). With that fixed, AIVA would be a cheaper fix than `--sedimentation_cfl`.
