@@ -14,7 +14,8 @@ precomputed `Field`, never from the sounding itself.
 module MonsoonConvection
 
 export Sounding, read_cm1_sounding, build_model, set_initial_conditions!,
-       build_simulation, restore_latest_checkpoint!, run_simulation!
+       build_simulation, restore_latest_checkpoint!, run_simulation!,
+       sedimentation_rate_profile
 
 using Breeze
 using Breeze: BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux
@@ -24,6 +25,9 @@ using Oceananigans.Grids: znodes, znode
 using Oceananigans.TimeSteppers: update_state!
 using Oceananigans.Architectures: on_architecture
 using Oceananigans.TurbulenceClosures: closure_required_tracers
+using Oceananigans.AbstractOperations: KernelFunctionOperation
+using Oceananigans.Advection: cell_advection_timescale
+using Oceananigans.Operators: Δzᶜᶜᶠ
 using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names
 
 using NCDatasets  # required for RRTMGP lookup tables
@@ -421,6 +425,47 @@ end
 
 ascii_outputs(outputs) = NamedTuple(netcdf_name(name) => outputs[name] for name in keys(outputs))
 
+#####
+##### Sedimentation in the time-step limit
+#####
+
+# P3 sediments each hydrometeor by adding its fall speed to w in that field's advection, but the
+# time-step wizard limits Δt with u, v, w only. Dense rimed ice falls 10–20 m/s, so in the 50 m
+# lowest cell at Δt ≈ 8 s the fall Courant number exceeds 1 (explicit WENO is then unstable).
+
+const fall_speed_names = (:wᶜˡ, :wⁿᶜˡ, :wʳ, :wⁿʳ, :wⁱ, :wⁿⁱ)
+
+@inline fastest_fall(i, j, k, w, ::Tuple{}) = zero(eltype(w))
+@inline fastest_fall(i, j, k, w, fall::Tuple) =
+    @inbounds max(abs(w[i, j, k] + fall[1][i, j, k]), fastest_fall(i, j, k, w, Base.tail(fall)))
+
+@inline sedimentation_rate(i, j, k, grid, w, fall) = fastest_fall(i, j, k, w, fall) / Δzᶜᶜᶠ(i, j, k, grid)
+
+"""
+    sedimentation_rate_profile(model)
+
+Field of the per-level maximum over x, y of max |w + w_fall| / Δz (1/s), over the microphysics'
+fall speeds (P3: cloud, rain and ice, mass- and number-weighted), at w faces. Times Δt it is the
+largest vertical Courant number of any sedimenting field. `compute!` it before use.
+"""
+function sedimentation_rate_profile(model)
+    μ = model.microphysical_fields
+    fall = Tuple(μ[name] for name in fall_speed_names if haskey(μ, name))
+    rate = KernelFunctionOperation{Center, Center, Face}(sedimentation_rate, model.grid,
+                                                        model.velocities.w, fall)
+    return Field(Reduction(maximum!, rate, dims = (1, 2)))
+end
+
+"Advective timescale of the time-step wizard, also limited by the fall speeds."
+struct SedimentationLimitedTimescale{P}
+    rate :: P
+end
+
+function (τ::SedimentationLimitedTimescale)(model)
+    compute!(τ.rate)
+    return min(cell_advection_timescale(model), 1 / maximum(τ.rate))
+end
+
 """
     build_simulation(model; stop_time, small_test=false, restart=false, wall_time_limit=Inf,
                      prefix="monsoon_convection", dir=".", ...)
@@ -435,6 +480,8 @@ NetCDF output (hourly mean profiles and lowest-level fields, CM1 `statfrq`; 3D f
   then writes a checkpoint so the run can be continued with a restart. Set it a little
   below the batch job's time limit.
 - With `restart = true`, output is appended to the existing NetCDF files.
+- With `sedimentation_cfl = true`, the time step is also limited by the fall speeds:
+  max |w + w_fall| Δt / Δz ≤ `cfl` (see [`sedimentation_rate_profile`](@ref)).
 """
 function build_simulation(model;
                           stop_time,
@@ -451,10 +498,13 @@ function build_simulation(model;
                           profiles_interval = 1hour,
                           surface_interval = 1hour,
                           fields_interval = small_test ? 30minutes : 1day,
-                          checkpoint_interval = fields_interval)
+                          checkpoint_interval = fields_interval,
+                          sedimentation_cfl = false)
 
     simulation = Simulation(model; Δt, stop_time, stop_iteration, wall_time_limit)
-    conjure_time_step_wizard!(simulation; cfl, max_Δt)
+    timescale = sedimentation_cfl ? SedimentationLimitedTimescale(sedimentation_rate_profile(model)) :
+                                    cell_advection_timescale
+    conjure_time_step_wizard!(simulation; cfl, max_Δt, cell_advection_timescale = timescale)
     Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
 
     u, v, w = model.velocities

@@ -67,6 +67,8 @@
 #                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
 #   --unbounded_advection plain WENO(5) for scalars instead of the default bounds-preserving
 #                         WENO (moisture, hydrometeors, numbers ≥ 0); for comparison runs.
+#   --sedimentation_cfl   also limit the time step by the hydrometeor fall speeds, so that
+#                         |w + w_fall| Δt / Δz ≤ cfl (Breeze's limit uses u, v, w only)
 #   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
 #                         --small_test). Only the latest is kept, and none is written when a run
 #                         ends in NaN, so use a short interval to be able to restart just before
@@ -112,8 +114,8 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 flags = try
     f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
                                "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval",
-                               "unbounded_advection"))
-    for name in ("small_test", "restart", "debug_nan", "unbounded_advection")
+                               "unbounded_advection", "sedimentation_cfl"))
+    for name in ("small_test", "restart", "debug_nan", "unbounded_advection", "sedimentation_cfl")
         get(f, name, "true") == "true" || error("--$name takes no value")
     end
     get(f, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
@@ -245,7 +247,11 @@ prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
 checkpoint_kw = haskey(flags, "checkpoint_interval") ?
                 (; checkpoint_interval = parse_duration(flags["checkpoint_interval"])) : (;)
 
-simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, checkpoint_kw...)
+# --sedimentation_cfl: the time step also keeps the fall-speed Courant number ≤ cfl
+sedimentation_cfl = haskey(flags, "sedimentation_cfl")
+
+simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, sedimentation_cfl,
+                              checkpoint_kw...)
 
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(arch) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
@@ -273,6 +279,7 @@ if haskey(flags, "debug_nan")
                            (; T = m.temperature, Fᴿ = m.radiation.flux_divergence),
                            NamedTuple(n => getproperty(m.closure_fields, n) for n in (:Kᵘ, :Kᶜ, :Kᵉ)),
                            NamedTuple(n => μ[n] for n in keys(μ) if !startswith(string(n), "ρ") && μ[n] isa Field))
+    fall_rate = sedimentation_rate_profile(m)    # per-level max |w + w_fall| / Δz
 
     function debug_nan(sim)
         if iteration(sim) % 10 == 0
@@ -301,8 +308,12 @@ if haskey(flags, "debug_nan")
             nx = size(Tᵃ, 1)
             crossings = sum(count(i -> sign(Tᵃ[i, j]) != sign(Tᵃ[mod1(i + 1, nx), j]), 1:nx) for j in axes(Tᵃ, 2)) / size(Tᵃ, 2)
             λ = crossings > 0 ? 2 * m.grid.Lx / crossings / 1e3 : Inf
+            compute!(fall_rate)
+            Cˢ, kˢ = findmax(vec(Array(interior(fall_rate))))
             @printf("    max|w| above 20 km = %.3g m/s at z = %.0f m, faces with Kᵘ at the cap: %d, top-cell T anomaly wavelength ≈ %.1f km\n",
                     wᵘᵖ, zw[upper[Iᵘᵖ[3]]], ncap, λ)
+            @printf("    max sedimentation Courant number |w + w_fall| Δt / Δz = %.3g at z = %.0f m\n",
+                    Cˢ * sim.Δt, zw[kˢ])
         end
         all(f -> all(isfinite, interior(f)), values(checked_fields)) && return nothing
 

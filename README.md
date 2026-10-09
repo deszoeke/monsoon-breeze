@@ -82,7 +82,7 @@ laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size
 ## Changes to Breeze defaults
 
 `MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Items 1,
-2 and 4 are in `build_model` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
+2 and 4 are in `build_model`, item 5 in `build_simulation` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
 item 3 is the driver's default precision. Keep them in mind when interpreting results or comparing
 with other Breeze runs.
 
@@ -206,6 +206,27 @@ is unbounded WENO(5).
   there.
 - **Comparing.** `--unbounded_advection` restores Breeze's unbounded WENO(5) for all scalars.
 
+### 5. Fall speeds in the time-step limit (`--sedimentation_cfl`, optional)
+
+P3 moves each hydrometeor field by adding its fall speed to w in that field's advection. Breeze's
+time-step wizard limits Δt with u, v and w only, so the fall speed never constrains Δt, and
+Breeze 0.11.3 has no sedimentation substepping. Its adaptive implicit vertical advection leaves out
+the fall speeds on the anelastic path. Rain falls at up to ~9 m/s, and dense rimed ice at
+10–20 m/s. In the 50 m lowest cell at Δt ≈ 8 s, the fall Courant number |w + w_fall| Δt / Δz
+exceeds 1, and explicit WENO is unstable there.
+
+- **Evidence.** In a forced-condensation test (small domain, CPU), rain alone reached a fall
+  Courant number of 1.3–2.1 at Δt ≈ 8 s. The full-domain runs (mixed precision, bounded or
+  unbounded advection) all failed at the onset of deep convection (~17.5 h, iteration
+  ~7930–8000). Ice number went NaN first, from the lowest cell up, after max ice mass grew to
+  5 g/kg.
+- **Fix.** `--sedimentation_cfl` (`build_simulation(...; sedimentation_cfl = true)`) also limits
+  Δt so that the fall Courant number ≤ `cfl` (0.7). In the test, Δt fell from ~8 s to ~3.5–4 s
+  while rain was present, so heavy precipitation costs roughly 2× more.
+  `--debug_nan` prints the maximum fall Courant number and its height every 10 iterations.
+- **Better long-term fix (upstream).** Sedimentation substepping (as in CM1), or implicit
+  sedimentation, would remove the cost.
+
 ## Running the model
 
 ```sh
@@ -225,6 +246,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--pressure_solver=Float32\|Float64` | Float64 | Precision of the anelastic pressure solve only. **Keep Float64:** a Float32 pressure solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
 | `--checkpoint_interval=1h` | 1 d (30 min with `--small_test`) | How often to write restart files. Only the latest is kept, and none is written when a run ends in NaN, so use a short interval to be able to restart just before a failure. |
 | `--unbounded_advection` | off | Use Breeze's unbounded WENO(5) for all scalars instead of the bounded default (see "Changes to Breeze defaults", 4). For A/B comparison. |
+| `--sedimentation_cfl` | off | Also limit the time step by the hydrometeor fall speeds, so that the fall Courant number (w + fall speed) Δt / Δz ≤ 0.7 (see "Changes to Breeze defaults", 5). |
 | `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or
