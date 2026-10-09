@@ -5,8 +5,8 @@ Start with `notes/STATUS.md` (current state, runs, next steps). Keep it current:
 
 ## Code analysis
 Use graphify for code analysis. This repo is small (~1k lines); most of the relevant code is in
-Breeze and Oceananigans. Run `helpers/graph_package.sh` first (it skips graphs that match the
-Manifest versions), then query `--graph graphify-breeze/graphify-out/graph.json` or
+Breeze and Oceananigans. Run `helpers/graph_package.sh` first (~1 s; it rebuilds a graph only if that
+package's source changed), then query `--graph graphify-breeze/graphify-out/graph.json` or
 `--graph graphify-oceananigans/graphify-out/graph.json`. Grep only to read specific lines.
 
 ## graphify
