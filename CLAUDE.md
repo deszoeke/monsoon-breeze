@@ -1,3 +1,14 @@
+## Picking up the work
+
+Start with `notes/STATUS.md` (current state, runs, next steps). Keep it current: update it and
+`notes/nan_investigation.md` when a run finishes or a hypothesis is tested.
+
+## Code analysis
+Use graphify for code analysis. This repo is small (~1k lines); most of the relevant code is in
+Breeze and Oceananigans. Run `helpers/graph_package.sh` first (it skips graphs that match the
+Manifest versions), then query `--graph graphify-breeze/graphify-out/graph.json` or
+`--graph graphify-oceananigans/graphify-out/graph.json`. Grep only to read specific lines.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
