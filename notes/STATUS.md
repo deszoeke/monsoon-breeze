@@ -25,7 +25,7 @@ one-moment microphysics (was P3), RRTMGP, 4 days on one A100 (`aerosmith`, parti
 | (≥ 2 earlier runs) | mixed precision, unbounded advection | NaN ~iteration 8000 (17.5 h) |
 | `adv_bounded` (job 5751294) | restart from 7699, bounded advection, `--debug_nan` | NaN at 7934; ice number first, from k = 1 up |
 | `conv_64` | all-Float64 | **checkpoint at iteration 8243 (2026-10-11): passed the ~7930–8000 failure** |
-| `p3_fixes` (submitted 2026-10-12) | P3, restart from 7699 + `--theta_sedimentation_fix --sedimentation_cfl --debug_nan --checkpoint_interval=1h` | running; last P3 test |
+| `p3_fixes` (submitted 2026-10-12) | P3, restart from 7699 + `--theta_sedimentation_fix --sedimentation_cfl --debug_nan --checkpoint_interval=1h` | **passed 7934, NaN at 8326 (17.64 h)**: ice number again (see `nan_investigation.md`). Last P3 test; P3 abandoned |
 | `sed_cfl` (submitted 2026-10-09) | restart from 7699 + `--sedimentation_cfl --debug_nan --checkpoint_interval=1h` | no new checkpoint yet (only 7699, the restart file) as of 2026-10-11; outcome unknown |
 
 ## Next steps
@@ -42,7 +42,7 @@ one-moment microphysics (was P3), RRTMGP, 4 days on one A100 (`aerosmith`, parti
 5. Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`,
    `breeze_issue_theta_sedimentation.md`.
 6. P3 isn't production ready. **Mixed-phase one-moment microphysics is now the default**
-   (`--microphysics=p3` for P3; CPU-tested 2026-10-12). After `p3_fixes`: re-precompile on the
+   (`--microphysics=p3` for P3; CPU-tested 2026-10-12). `p3_fixes` failed in P3 ice number (2026-10-12), so next: re-precompile on the
    cluster (`sbatch precompile_job.sh`), then a full one-moment run from t = 0
    (`one_moment_microphysics.md`).
 7. **θˡⁱ sedimentation energy leak** (`nan_investigation.md`): Breeze's ρθ tendency has no

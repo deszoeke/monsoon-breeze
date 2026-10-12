@@ -44,3 +44,33 @@ with WENO, so it cancels the leak only to that accuracy). Tested: runs on CPU, c
 size for a rain layer. Not yet on a full run. Issue draft: `breeze_issue_theta_sedimentation.md`.
 Unknown whether it contributes to the NaN; it changes the convection a lot either way.
 
+## `p3_fixes`: both fixes, P3 still fails in ice number (2026-10-12)
+
+Restart from 7699 with `--theta_sedimentation_fix --sedimentation_cfl --debug_nan`. It passed
+7934 (the `adv_bounded` failure) but hit NaN at iteration 8326, t = 17.64 h, Δt ≈ 3.7 s.
+
+- The sedimentation CFL held: the fall Courant number stayed at 0.7, at z = 0–50 m.
+- Ice number grew fast just before the NaN: max nⁱ 8.3×10³ → 1.75×10⁴ → 2.4×10⁴ /kg over 20
+  iterations, at 8–9 km. That's the same pattern as `adv_bounded` (3×10³ → 5.5×10⁴ /kg).
+- The NaN report, read carefully. "Fewest points first" misleads here, because P3's
+  `surface_temperature` is 2D.
+  - `surface_temperature` had 25 points, i.e. 25 columns.
+  - ρθ, the moisture fields and T had 1450 points each = 25 columns × 58 levels, so every level
+    of those columns.
+  - `wⁱ` and `wⁿⁱ` had 1091 points, k = 1–29.
+  - `ρnⁱ` had 3727 points, about 64 columns: **more** than any other field.
+- So the ice number most likely went bad first. It had already spread sideways to more columns,
+  while the other fields went NaN through whole columns at once. Column-wise operations do
+  that, e.g. the P3 column surface temperature or the vertically implicit TKE diffusion.
+- Kᵘ at the cap: about 20,000 faces at 655 m, and rising.
+- `ρe` bounds warnings right after the restart: negative TKE inherited from the checkpoint,
+  gone within 80 iterations, as before.
+
+Conclusion: the sedimentation CFL and the θ fix delay the P3 failure by ~400 iterations but don't
+remove it.
+(Float32 may still matter for P3: `conv_64`, all-Float64 with plain P3, passed 8243. But the
+colleague running one-moment in Breeze needed no Float64, not even for the pressure solve, on
+different vertical levels. Our Float32 pressure-solve instability came from the tall, strongly
+stratified column on the 512 km domain, so it may depend on the levels and domain.) Ice number blowing up in P3 remains the proximate cause. Switching to one-moment
+(`one_moment_microphysics.md`).
+
