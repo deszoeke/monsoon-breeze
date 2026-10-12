@@ -9,6 +9,17 @@ Breeze and Oceananigans. Run `helpers/graph_package.sh` first (~1 s; it rebuilds
 package's source changed), then query `--graph graphify-breeze/graphify-out/graph.json` or
 `--graph graphify-oceananigans/graphify-out/graph.json`. Grep only to read specific lines.
 
+**Who does the lookup:**
+- **File and line already known:** read them directly with `sed` or `grep`.
+- **Anything else** (graph queries, finding code, tracing calls, summarizing notes or code):
+  send it to the `code-reader` agent (Sonnet, read-only, `.claude/agents/code-reader.md`).
+  It reports facts with file:line references.
+- **Judgment calls** (whether something is correct, what to do next) stay with the main
+  session. Don't give them to `code-reader`.
+- **Package extensions:** the Breeze and Oceananigans graphs cover `src/` only. Extensions
+  such as Breeze's `ext/BreezeCloudMicrophysicsExt/` are read from the installed package
+  directory (`graphify-<name>/SOURCE_DIR`).
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
