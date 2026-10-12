@@ -29,3 +29,18 @@ Newest last. Each entry: symptom → test → conclusion.
 
 Other open suspects if `sed_cfl` still fails: P3 itself (new, undertested in Breeze); mixed
 precision (`conv_64`, all-Float64, passed the failure point: checkpoint at iteration 8243, 2026-10-11); K at the cap over a large area in the boundary layer.
+
+## θˡⁱ sedimentation energy leak (2026-10-12)
+
+A colleague using one-moment microphysics found that Breeze's ρθ tendency has no sedimentation
+term. T = Π θˡⁱ + ℒ q / cᵖᵐ, so falling condensate changes T by ℒ Δq / cᵖᵐ at fixed θˡⁱ. The column
+loses ℒ × (surface precipitation) of energy, so the latent heating of all the condensate that rains
+out is undone. Our P3 runs have it too. In a CPU check, a 2 g/kg rain layer gives a spurious
++0.19 K s⁻¹ in the cell below it.
+
+Fix: `--theta_sedimentation_fix` (`helpers/theta_sedimentation_correction.jl`) adds
+−(ℒˡ Sˡ + ℒⁱ Sⁱ)/(cᵖᵐ Π) to Gρθ at every RK stage, with first-order upwind fluxes (Breeze sediments
+with WENO, so it cancels the leak only to that accuracy). Tested: runs on CPU, correct sign and
+size for a rain layer. Not yet on a full run. Issue draft: `breeze_issue_theta_sedimentation.md`.
+Unknown whether it contributes to the NaN; it changes the convection a lot either way.
+

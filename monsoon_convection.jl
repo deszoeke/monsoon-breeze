@@ -69,6 +69,9 @@
 #                         WENO (moisture, hydrometeors, numbers ≥ 0); for comparison runs.
 #   --sedimentation_cfl   also limit the time step by the hydrometeor fall speeds, so that
 #                         |w + w_fall| Δt / Δz ≤ cfl (Breeze's limit uses u, v, w only)
+#   --theta_sedimentation_fix  correct θˡⁱ for falling hydrometeors: Breeze's θ tendency has no
+#                         sedimentation term, so falling condensate changes T by ℒ Δq / cᵖ
+#                         (helpers/theta_sedimentation_correction.jl)
 #   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
 #                         --small_test). Only the latest is kept, and none is written when a run
 #                         ends in NaN, so use a short interval to be able to restart just before
@@ -114,8 +117,9 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 flags = try
     f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
                                "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval",
-                               "unbounded_advection", "sedimentation_cfl"))
-    for name in ("small_test", "restart", "debug_nan", "unbounded_advection", "sedimentation_cfl")
+                               "unbounded_advection", "sedimentation_cfl", "theta_sedimentation_fix"))
+    for name in ("small_test", "restart", "debug_nan", "unbounded_advection", "sedimentation_cfl",
+                 "theta_sedimentation_fix")
         get(f, name, "true") == "true" || error("--$name takes no value")
     end
     get(f, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
@@ -257,6 +261,12 @@ simulation = build_simulation(model; stop_time, wall_time_limit, small_test, res
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
 restart && restore_latest_checkpoint!(simulation)
+
+# --theta_sedimentation_fix: add the θˡⁱ sedimentation term Breeze leaves out to the ρθ tendency
+if haskey(flags, "theta_sedimentation_fix")
+    include(joinpath(@__DIR__, "helpers", "theta_sedimentation_correction.jl"))
+    Base.invokelatest(add_theta_sedimentation_correction!, simulation)
+end
 
 #####
 ##### --debug_nan: every 10 iterations, print field extremes and stop at the first NaN/Inf in any

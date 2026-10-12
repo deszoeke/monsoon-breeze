@@ -41,6 +41,7 @@ submissions.
 
 `--arch --float --pressure_solver --small_test --restart --stop_time (total) --wall_time
 --checkpoint_interval --sponge --sponge_timescale --unbounded_advection --sedimentation_cfl
+--theta_sedimentation_fix
 --debug_nan`
 
 ## Julia lessons from this project

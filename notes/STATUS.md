@@ -1,4 +1,4 @@
-# Status (updated 2026-10-11)
+# Status (updated 2026-10-12)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `breeze_internals.md` (what we learned in the Breeze/Oceananigans source), `workflow.md`
@@ -38,6 +38,11 @@ RRTMGP, 4 days on one A100 (`aerosmith`, partition `ceoas-gpu`).
    implicated in the NaN. Keep it running to see whether it fails later.
 4. Optional: draft a Breeze issue saying AIVA leaves out the fall speeds on the anelastic path
    (`breeze_internals.md`). With that fixed, AIVA would be a cheaper fix than `--sedimentation_cfl`.
-5. Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`.
+5. Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`,
+   `breeze_issue_theta_sedimentation.md`.
 6. P3 isn't production ready. Plan for switching to mixed-phase one-moment microphysics:
    `one_moment_microphysics.md`.
+7. **θˡⁱ sedimentation energy leak** (`nan_investigation.md`): Breeze's ρθ tendency has no
+   sedimentation term, so precipitating out undoes its latent heating. Use
+   `--theta_sedimentation_fix` on new runs (CPU-tested, not yet on a full run).
+

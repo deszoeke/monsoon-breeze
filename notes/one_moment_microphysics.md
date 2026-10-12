@@ -40,6 +40,9 @@ The graphify graph of Breeze covers `src/` only, not `ext/`. Read the extension 
 - **The sedimentation problem doesn't go away.** One-moment rain and snow still fall through the
   50 m bottom cell, so keep `--sedimentation_cfl`. One-moment does remove the P3 ice-number blow-up
   that `adv_bounded` hit first.
+- **The θˡⁱ sedimentation leak** (`nan_investigation.md`) affects one-moment too. Adapt
+  `helpers/theta_sedimentation_correction.jl` to the 1M fields (liquid ρqᶜˡ, ρqʳ; ice ρqᶜⁱ, ρqˢⁿ,
+  with velocities wᶜˡ, wʳ, wᶜⁱ, wˢⁿ), as in the colleague's original patch.
 
 ## Plan
 
