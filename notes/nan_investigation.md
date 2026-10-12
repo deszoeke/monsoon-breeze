@@ -28,4 +28,4 @@ Newest last. Each entry: symptom → test → conclusion.
      **Untested on the full run.**
 
 Other open suspects if `sed_cfl` still fails: P3 itself (new, undertested in Breeze); mixed
-precision (compare with `conv_64`); K at the cap over a large area in the boundary layer.
+precision (`conv_64`, all-Float64, passed the failure point: checkpoint at iteration 8243, 2026-10-11); K at the cap over a large area in the boundary layer.

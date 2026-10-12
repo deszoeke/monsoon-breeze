@@ -14,7 +14,8 @@
 #   sbatch monsoon_job.sh                      # first job
 #   sbatch monsoon_job.sh --restart            # continuation, until the stop time is reached
 #   RUN=run/sst302 sbatch monsoon_job.sh       # another experiment in its own run directory
-# Output and checkpoints go to $RUN (default run/), the log to slurm-<jobid>.out.
+# Output, checkpoints and the log (slurm-<jobid>.out) go to $RUN (default run/). The
+# slurm-<jobid>.out in the repository only says where the run directory is.
 
 set -euo pipefail
 
@@ -33,6 +34,13 @@ done
 export CUDA_VISIBLE_DEVICES=$gpu
 
 mkdir -p "$RUN" && cd "$RUN"
+echo "job $SLURM_JOB_ID on $(hostname), GPU $gpu, $(julia --version), run directory $PWD"
+
+# The rest of the log goes in the run directory, next to the run's output and checkpoints
+# (#SBATCH --output can't use $RUN). slurm-<jobid>.out in the repository keeps the line above.
+LOG=$PWD/slurm-$SLURM_JOB_ID.out
+echo "log: $LOG"
+exec > "$LOG" 2>&1
 echo "job $SLURM_JOB_ID on $(hostname), GPU $gpu, $(julia --version), run directory $PWD"
 
 cmd=(julia --project="$REPO" "$REPO/monsoon_convection.jl" --arch=gpu --wall_time="$WALL_TIME" "$@")

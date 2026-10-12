@@ -32,7 +32,9 @@ cp run/adv_bounded/monsoon_convection_checkpoint_iteration7699.jld2 run/sed_cfl/
 RUN=run/sed_cfl sbatch monsoon_job.sh --restart --debug_nan --sedimentation_cfl --checkpoint_interval=1h
 ```
 
-`slurm-<job>.out` shows the full command line. `sacct -j <job> -o SubmitLine%200` shows past
+The job log is `$RUN/slurm-<job>.out`, next to the run's output; the `slurm-<job>.out` in the
+repository only names the run directory. Logs from before 2026-10-11 are all in the repository:
+`grep -H "run directory" slurm-*.out` tells which run each belongs to. The log shows the full command line. `sacct -j <job> -o SubmitLine%200` shows past
 submissions.
 
 ## Flags (driver)
