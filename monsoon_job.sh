@@ -43,6 +43,9 @@ echo "log: $LOG"
 exec > "$LOG" 2>&1
 echo "job $SLURM_JOB_ID on $(hostname), GPU $gpu, $(julia --version), run directory $PWD"
 
+# srun --unbuffered writes output to the log as it comes, so the --debug_nan diagnostics just before
+# a crash are not lost in a buffer. Slurm sets CUDA_VISIBLE_DEVICES again for the job step, so
+# env sets the idle GPU chosen above once more inside the step.
 cmd=(julia --project="$REPO" "$REPO/monsoon_convection.jl" --arch=gpu --wall_time="$WALL_TIME" "$@")
 echo "command: ${cmd[*]}"
-"${cmd[@]}"
+srun --unbuffered env CUDA_VISIBLE_DEVICES="$gpu" "${cmd[@]}"
