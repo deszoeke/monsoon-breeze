@@ -213,12 +213,40 @@ weakdeps = ["CUDA", "MPI"]
     ClimaCommsCUDAExt = "CUDA"
     ClimaCommsMPIExt = "MPI"
 
+[[deps.ClimaParams]]
+deps = ["Dates", "TOML"]
+git-tree-sha1 = "18b954b28e662d6b890c142584498de44070e115"
+registries = "General"
+uuid = "5c42b081-d73a-476f-9059-fd94b934656c"
+version = "1.1.17"
+
+[[deps.CloudMicrophysics]]
+deps = ["ClimaParams", "DocStringExtensions", "FastGaussQuadrature", "ForwardDiff", "InteractiveUtils", "LazyArtifacts", "LogExpFunctions", "RootSolvers", "SpecialFunctions", "StaticArrays", "Thermodynamics", "UnrolledUtilities"]
+git-tree-sha1 = "4a9ea10068587ea77125b8f4ecdf15be700fbf5b"
+registries = "General"
+uuid = "6a9e3e04-43cd-43ba-94b9-e8782df3c71b"
+version = "0.40.1"
+
+    [deps.CloudMicrophysics.extensions]
+    EmulatorModelsExt = ["DataFrames", "MLJ"]
+
+    [deps.CloudMicrophysics.weakdeps]
+    DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+    MLJ = "add582a8-e3ab-11e8-2d5e-e98b27df1bc7"
+
 [[deps.CommonDataModel]]
 deps = ["CFTime", "DataStructures", "Dates", "DiskArrays", "Preferences", "Printf", "Statistics"]
 git-tree-sha1 = "54d50f8a0a68ff4160564dfa09fc5de32465cfca"
 registries = "General"
 uuid = "1fbeeb36-5f17-413c-809b-666fb144f157"
 version = "0.4.4"
+
+[[deps.CommonSubexpressions]]
+deps = ["MacroTools"]
+git-tree-sha1 = "cda2cfaebb4be89c9084adaca7dd7333369715c5"
+registries = "General"
+uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
+version = "0.3.1"
 
 [[deps.CompilerCaching]]
 deps = ["LMDB", "SHA", "Scratch"]
@@ -285,6 +313,20 @@ deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 version = "1.11.0"
 
+[[deps.DiffResults]]
+deps = ["StaticArraysCore"]
+git-tree-sha1 = "782dd5f4561f5d267313f23853baaaa4c52ea621"
+registries = "General"
+uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+version = "1.1.0"
+
+[[deps.DiffRules]]
+deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
+git-tree-sha1 = "79a2aca180a85c690c58a020d47b426954b590f8"
+registries = "General"
+uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
+version = "1.16.0"
+
 [[deps.DiskArrays]]
 deps = ["ConstructionBase", "LRUCache", "Mmap", "OffsetArrays"]
 git-tree-sha1 = "8fd6be631dcc9cf987bbb3b173a363d8e2bfc2d7"
@@ -349,6 +391,13 @@ registries = "General"
 uuid = "f5851436-0d7a-5f13-b9de-f02708fd171a"
 version = "3.3.12+0"
 
+[[deps.FastGaussQuadrature]]
+deps = ["LinearAlgebra", "SpecialFunctions", "StaticArrays"]
+git-tree-sha1 = "4916117dd032ec5959b7633aedbbac408ca5ddeb"
+registries = "General"
+uuid = "442a2c76-b920-505d-bb47-c5924d526838"
+version = "1.3.0"
+
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
 git-tree-sha1 = "6621fef488e496356c9c9625d0562c12a6070819"
@@ -365,6 +414,17 @@ version = "1.20.0"
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 version = "1.11.0"
+
+[[deps.ForwardDiff]]
+deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions"]
+git-tree-sha1 = "3b0f72e2ffef1a139ac450725c9ecd01c0a3c050"
+registries = "General"
+uuid = "f6369f11-7733-5829-9624-2563aa707210"
+version = "1.4.6"
+weakdeps = ["StaticArrays"]
+
+    [deps.ForwardDiff.extensions]
+    ForwardDiffStaticArraysExt = "StaticArrays"
 
 [[deps.GPUArrays]]
 deps = ["Adapt", "GPUArraysCore", "KernelAbstractions", "LLVM", "LinearAlgebra", "Printf", "Random", "Reexport", "ScopedValues", "Serialization", "SparseArrays", "Statistics"]
@@ -731,7 +791,7 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 version = "1.11.0"
 
 [[deps.MonsoonConvection]]
-deps = ["Breeze", "Logging", "NCDatasets", "Oceananigans", "PrecompileTools", "Printf", "RRTMGP", "Random", "Statistics"]
+deps = ["Breeze", "CloudMicrophysics", "Logging", "NCDatasets", "Oceananigans", "PrecompileTools", "Printf", "RRTMGP", "Random", "SpecialFunctions", "Statistics"]
 path = "MonsoonConvection"
 uuid = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
 version = "0.1.0"
@@ -791,6 +851,13 @@ git-tree-sha1 = "af2232f69447494514c25742ba1503ec7e9877fe"
 registries = "General"
 uuid = "e98f9f5b-d649-5603-91fd-7774390e6439"
 version = "3.2.2+0"
+
+[[deps.NaNMath]]
+deps = ["OpenLibm_jll"]
+git-tree-sha1 = "dbd2e8cd2c1c27f0b584f6661b4309609c5a685e"
+registries = "General"
+uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
+version = "1.1.4"
 
 [[deps.NetCDF_jll]]
 deps = ["Artifacts", "Blosc_jll", "Bzip2_jll", "HDF5_jll", "JLLWrappers", "LazyArtifacts", "LibCURL_jll", "Libdl", "MPIABI_jll", "MPICH_jll", "MPIPreferences", "MPItrampoline_jll", "MicrosoftMPI_jll", "OpenMPI_jll", "TOML", "XML2_jll", "Zlib_jll", "Zstd_jll", "libaec_jll", "libzip_jll"]
@@ -959,16 +1026,12 @@ git-tree-sha1 = "baab3eb6be2ea5408d60c2e97294d56ba20e59bd"
 registries = "General"
 uuid = "a01a1ee8-cea4-48fc-987c-fc7878d79da1"
 version = "1.0.1"
+weakdeps = ["CUDA", "ClimaParams", "NCDatasets"]
 
     [deps.RRTMGP.extensions]
     CreateParametersExt = "ClimaParams"
     RRTMGPCUDAExt = "CUDA"
     RRTMGPNCDatasetsExt = "NCDatasets"
-
-    [deps.RRTMGP.weakdeps]
-    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-    ClimaParams = "5c42b081-d73a-476f-9059-fd94b934656c"
-    NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 
 [[deps.Random]]
 deps = ["SHA"]
@@ -1015,6 +1078,13 @@ git-tree-sha1 = "62389eeff14780bfe55195b7204c0d8738436d64"
 registries = "General"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.3.1"
+
+[[deps.RootSolvers]]
+deps = ["ForwardDiff", "Printf"]
+git-tree-sha1 = "d4c63e1165df602d9392b9dab37504dd97eaba71"
+registries = "General"
+uuid = "7181ea78-2dcb-4de3-ab41-2b8ab5a31e74"
+version = "1.1.0"
 
 [[deps.Rotations]]
 deps = ["LinearAlgebra", "Quaternions", "Random", "StaticArrays"]
@@ -1192,6 +1262,17 @@ version = "0.20.10"
     RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[[deps.Thermodynamics]]
+deps = ["ForwardDiff", "Random", "RootSolvers"]
+git-tree-sha1 = "15eb84002205efc40e231c9f9b4b57a1003793b4"
+registries = "General"
+uuid = "b60c26fb-14c3-4610-9d3e-2d17fe7ff00c"
+version = "1.3.0"
+weakdeps = ["ClimaParams"]
+
+    [deps.Thermodynamics.extensions]
+    CreateParametersExt = "ClimaParams"
+
 [[deps.Tracy]]
 deps = ["ExprTools", "LibTracyClient_jll", "Libdl"]
 git-tree-sha1 = "73e3ff50fd3990874c59fef0f35d10644a1487bc"
@@ -1213,6 +1294,16 @@ version = "1.11.0"
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 version = "1.11.0"
+
+[[deps.UnrolledUtilities]]
+git-tree-sha1 = "ca44a7e6c34e2125b99a5200014237fd65970c1d"
+registries = "General"
+uuid = "0fe1646c-419e-43be-ac14-22321958931b"
+version = "0.1.11"
+weakdeps = ["StaticArrays"]
+
+    [deps.UnrolledUtilities.extensions]
+    UnrolledUtilitiesStaticArraysExt = "StaticArrays"
 
 [[deps.UnsafeAtomics]]
 git-tree-sha1 = "30db7f4de09a321651498004c1cccfcef8a32495"

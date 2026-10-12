@@ -116,12 +116,16 @@ closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
 - **Upstream.** Worth raising with the Breeze developers: a mixing-length limit (e.g. a Blackadar
   form ℓ = κz / (1 + κz / ℓ∞)) or finite default caps would prevent the runaway at its source.
 
-### 2. P3 microphysics built on the target architecture (bug workaround, no physics change)
+### 2. Microphysics built on the target architecture (bug workaround, no physics change)
 
-`microphysics = on_architecture(arch, P3Microphysics())`. Breeze 0.11.3 embeds the microphysics in
-the surface-flux boundary conditions before moving it to the GPU, so GPU runs failed with "not
-isbits" (CPU lookup tables inside a GPU kernel). Building P3 on the GPU first avoids that; on CPU
-it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
+`microphysics = on_architecture(arch, ...)`. Breeze 0.11.3 embeds the microphysics in
+the surface-flux boundary conditions before moving it to the GPU, so P3 GPU runs failed with "not
+isbits" (CPU lookup tables inside a GPU kernel). Building the microphysics on the GPU first avoids
+that; on CPU it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
+
+The default microphysics is now Breeze's mixed-phase one-moment scheme (non-equilibrium cloud
+liquid and cloud ice, rain, snow; from CloudMicrophysics.jl) rather than P3, which is not
+production ready in Breeze. `--microphysics=p3` restores P3. See `notes/one_moment_microphysics.md`.
 
 ### Vertical grid above 18 km (driver)
 
@@ -237,6 +241,7 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 |---|---|---|
 | `--arch=cpu\|gpu` | `cpu` | Hardware to run on. A `gpu` request is checked (NVIDIA device present, CUDA working) before any package loads; if unavailable the run stops immediately and nothing is changed. |
 | `--float=Float32\|Float64` | Float32 on GPU, Float64 on CPU | Precision of the model. The pressure solve uses `--pressure_solver` (default Float64) regardless. |
+| `--microphysics=one_moment\|p3` | `one_moment` | Mixed-phase one-moment microphysics, or P3 (closest to CM1's `ptype = 5`, not production ready; compiles at startup, since only one-moment is precompiled). |
 | `--small_test` | off | 32×16 columns (16 km × 8 km), 1 h. A check that the code runs, not a scientific configuration. |
 | `--restart` | off | Continue from the latest checkpoint in the current directory (see Restarts). |
 | `--stop_time=96h` | 345700 s ≈ 96 h (CM1 `timax`); 1 h with `--small_test` | **Total** simulated time, counted from the start of the original run. Units: `d`, `h`, `min`, `s`. |
@@ -247,7 +252,8 @@ julia --project=<path/to/breeze> <path/to/breeze>/monsoon_convection.jl [flags]
 | `--checkpoint_interval=1h` | 1 d (30 min with `--small_test`) | How often to write restart files. Only the latest is kept, and none is written when a run ends in NaN, so use a short interval to be able to restart just before a failure. |
 | `--unbounded_advection` | off | Use Breeze's unbounded WENO(5) for all scalars instead of the bounded default (see "Changes to Breeze defaults", 4). For A/B comparison. |
 | `--sedimentation_cfl` | off | Also limit the time step by the hydrometeor fall speeds, so that the fall Courant number (w + fall speed) Δt / Δz ≤ 0.7 (see "Changes to Breeze defaults", 5). |
-| `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, P3, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
+| `--theta_sedimentation_fix` | off | Add the θˡⁱ sedimentation term Breeze leaves out, which otherwise undoes the latent heating of precipitation (`helpers/theta_sedimentation_correction.jl`, `breeze_issue_theta_sedimentation.md`). |
+| `--debug_nan` | off | Diagnostics: every iteration, check prognostic **and** diagnostic fields (temperature, microphysics, TKE diffusivities, radiative heating) for NaN/Inf; stop at the first, listing each bad field with its count and first grid location, fewest first. The field with the fewest bad points is nearest the origin. Prints field extremes every 10 iterations. |
 
 Flags may use hyphens or underscores (`--small-test` is the same as `--small_test`). Unknown or
 malformed flags stop the script within a second, with a short message.
@@ -274,7 +280,9 @@ The NetCDF files have plain-ASCII variable names, with `units` and `long_name` a
 | `theta` | liquid-ice potential temperature (equals θ in unsaturated air) | K |
 | `T` | temperature | K |
 | `qv` | specific humidity | kg kg⁻¹ |
-| `qcl`, `qr`, `qi` | P3 microphysics: cloud liquid, rain, total ice mass fractions | kg kg⁻¹ |
+| `qcl`, `qci`, `qr`, `qsn` | one-moment: cloud liquid, cloud ice, rain, snow mass fractions | kg kg⁻¹ |
+| `ql`, `qi` | one-moment: total liquid and total ice mass fractions | kg kg⁻¹ |
+| `qcl`, `qr`, `qi` | P3: cloud liquid, rain, total ice mass fractions | kg kg⁻¹ |
 | `qf`, `qwi` | P3: rime mass and liquid water on ice, mass fractions | kg kg⁻¹ |
 | `nr`, `ni` | P3: rain and ice number per mass of air | kg⁻¹ |
 | `bf` | P3: rime volume per mass of air | m³ kg⁻¹ |

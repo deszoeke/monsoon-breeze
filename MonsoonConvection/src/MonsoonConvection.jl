@@ -32,6 +32,9 @@ using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names
 
 using NCDatasets  # required for RRTMGP lookup tables
 using RRTMGP
+using CloudMicrophysics   # with SpecialFunctions, loads Breeze's one-moment microphysics extension
+using CloudMicrophysics.Parameters: CloudLiquid, CloudIce
+using SpecialFunctions
 
 using Logging
 using PrecompileTools
@@ -180,8 +183,8 @@ end
 #    of build_model. Set them from the driver (monsoon_convection.jl); no recompile.
 #    To expose a new parameter, add a keyword here once (one recompile), then vary it
 #    freely from the driver.
-#  • Changing a scheme or its type (e.g. P3Microphysics → OneMomentCloudMicrophysics,
-#    a different closure or advection scheme, a new forcing function) means editing
+#  • Changing a scheme or its type (e.g. a new microphysics option, a different closure
+#    or advection scheme, a new forcing function) means editing
 #    this file. That recompiles the package: rerun
 #        julia --project setup_precompile.jl
 #    so the precompile workload is rebuilt before the next production run.
@@ -213,7 +216,8 @@ function build_model(sounding::Sounding;
                      CO₂ = 387.75e-6,
                      radiation_interval = 300,          # CM1 dtrad
                      maximum_diffusivity = 100,         # m² s⁻¹, cap on the TKE closure's K (see below)
-                     bounded_scalar_advection = true)   # bounds-preserving WENO for all scalars (see below)
+                     bounded_scalar_advection = true,   # bounds-preserving WENO for all scalars (see below)
+                     microphysics = :one_moment)        # :one_moment or :p3 (see below)
 
     FT = Oceananigans.defaults.FloatType
     s = sounding
@@ -300,14 +304,16 @@ function build_model(sounding::Sounding;
                                        liquid_effective_radius = ConstantRadiusParticles(10e-6),
                                        ice_effective_radius = ConstantRadiusParticles(30e-6))
 
-    # Microphysics (CM1 ptype = 5: Morrison 2-moment with ice → P3)
+    # Microphysics. CM1 used ptype = 5 (Morrison 2-moment with ice). Breeze's P3 is the closest,
+    # but not production ready; the default is Breeze's mixed-phase one-moment scheme
+    # (CloudMicrophysics.jl): non-equilibrium cloud liquid and cloud ice, rain and snow.
     #
     # Built directly on `arch`: Breeze (0.11.3 and main as of Oct 2026) embeds the microphysics
     # in the surface-flux boundary conditions (energy-flux conversion, stability-dependent bulk
     # coefficient) *before* AtmosphereModel moves the microphysics to the GPU, so those boundary
-    # conditions kept CPU lookup tables and GPU kernels failed with "not isbits". Moving P3
-    # first makes both share the device copy; on CPU this is a no-op.
-    microphysics = on_architecture(arch, P3Microphysics())
+    # conditions kept CPU lookup tables (P3) and GPU kernels failed with "not isbits". Moving the
+    # microphysics first makes both share the device copy; on CPU this is a no-op.
+    microphysics = on_architecture(arch, microphysics_scheme(microphysics, FT))
 
     # PBL turbulence (CM1 ipbl = 2, no LES subgrid model)
     #
@@ -323,7 +329,8 @@ function build_model(sounding::Sounding;
 
     # Scalar advection: WENO(5), by default with Zhang–Shu (2010) bounds (Oceananigans `bounds`,
     # experimental) on the specific quantity of every scalar, so that strong updrafts cannot
-    # advect moisture, hydrometeors or numbers below 0 (negative values can make P3 return NaN).
+    # advect moisture, hydrometeors or numbers below 0 (negative values can make P3 return NaN;
+    # the mixed-phase one-moment scheme has no negative-moisture correction).
     # Every scalar is named, because names missing from a scalar_advection NamedTuple fall back
     # to second-order Centered advection. At our CFL (0.7) the bounds are not strictly guaranteed
     # (that needs a total Courant number ≤ 5/18), as in Breeze's TC-world example.
@@ -338,6 +345,25 @@ function build_model(sounding::Sounding;
     return AtmosphereModel(grid; dynamics, coriolis, microphysics, radiation, closure,
                            forcing, boundary_conditions, scalar_advection,
                            momentum_advection = WENO(order=5))
+end
+
+"""
+    microphysics_scheme(name, FT)
+
+The microphysics for `build_model(; microphysics = name)`:
+- `:one_moment`: mixed-phase non-equilibrium one-moment microphysics (cloud liquid, cloud ice,
+  rain, snow), as in Breeze's tests (`NonEquilibriumCloudFormation(CloudLiquid(), CloudIce())`).
+- `:p3`: `P3Microphysics()`, the closest to CM1's ptype = 5.
+"""
+function microphysics_scheme(name::Symbol, FT)
+    if name === :one_moment
+        # The one-moment constructor lives in Breeze's CloudMicrophysics extension
+        OneMoment = Base.get_extension(Breeze, :BreezeCloudMicrophysicsExt).OneMomentCloudMicrophysics
+        return OneMoment(FT; cloud_formation = NonEquilibriumCloudFormation(CloudLiquid(FT), CloudIce(FT)))
+    elseif name === :p3
+        return P3Microphysics()
+    end
+    throw(ArgumentError("microphysics must be :one_moment or :p3, not :$name"))
 end
 
 """
@@ -392,6 +418,7 @@ function netcdf_name(name)
 end
 
 const hydrometeors = Dict("cl" => "cloud liquid", "r" => "rain", "i" => "ice (total)",
+                          "l" => "liquid (total)", "ci" => "cloud ice", "sn" => "snow",
                           "f" => "rime on ice", "wi" => "liquid water on ice")
 
 function netcdf_attributes(name::Symbol)
@@ -429,11 +456,12 @@ ascii_outputs(outputs) = NamedTuple(netcdf_name(name) => outputs[name] for name 
 ##### Sedimentation in the time-step limit
 #####
 
-# P3 sediments each hydrometeor by adding its fall speed to w in that field's advection, but the
-# time-step wizard limits Δt with u, v, w only. Dense rimed ice falls 10–20 m/s, so in the 50 m
-# lowest cell at Δt ≈ 8 s the fall Courant number exceeds 1 (explicit WENO is then unstable).
+# Breeze sediments each hydrometeor by adding its fall speed to w in that field's advection, but
+# the time-step wizard limits Δt with u, v, w only. Dense rimed ice (P3) falls 10–20 m/s, so in the
+# 50 m lowest cell at Δt ≈ 8 s the fall Courant number exceeds 1 (explicit WENO is then unstable).
 
-const fall_speed_names = (:wᶜˡ, :wⁿᶜˡ, :wʳ, :wⁿʳ, :wⁱ, :wⁿⁱ)
+# P3: cloud, rain and ice, mass- and number-weighted; one-moment: wᶜˡ, wʳ, cloud ice and snow
+const fall_speed_names = (:wᶜˡ, :wⁿᶜˡ, :wʳ, :wⁿʳ, :wⁱ, :wⁿⁱ, :wᶜⁱ, :wˢⁿ)
 
 @inline fastest_fall(i, j, k, w, ::Tuple{}) = zero(eltype(w))
 @inline fastest_fall(i, j, k, w, fall::Tuple) =
@@ -445,7 +473,7 @@ const fall_speed_names = (:wᶜˡ, :wⁿᶜˡ, :wʳ, :wⁿʳ, :wⁱ, :wⁿⁱ)
     sedimentation_rate_profile(model)
 
 Field of the per-level maximum over x, y of max |w + w_fall| / Δz (1/s), over the microphysics'
-fall speeds (P3: cloud, rain and ice, mass- and number-weighted), at w faces. Times Δt it is the
+fall speeds (`fall_speed_names` present in the model), at w faces. Times Δt it is the
 largest vertical Courant number of any sedimenting field. `compute!` it before use.
 """
 function sedimentation_rate_profile(model)

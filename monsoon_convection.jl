@@ -12,8 +12,9 @@
 #   wbc = ebc = sbc = nbc = 1                          → Periodic × Periodic
 #   psolver = 3 (compressible)                         → AnelasticDynamics
 #   hadvord/vadvord = 5, weno_order = 5                → WENO(order=5)
-#   ptype = 5 (Morrison 2-moment w/ ice)               → P3 microphysics (Morrison & Milbrandt
-#                                                        successor; 2-moment rain and ice)
+#   ptype = 5 (Morrison 2-moment w/ ice)               → mixed-phase one-moment microphysics
+#                                                        (MODIFIED; --microphysics=p3 for P3, the
+#                                                        Morrison & Milbrandt successor)
 #   ipbl = 2, sgsmodel = 0, horizturb = 0              → vertical-only TKE closure, diffusivities
 #      (l_inf = 75 m)                                    capped at maximum_diffusivity = 100 m²/s
 #                                                        (MODIFIED from Breeze's default: no cap;
@@ -47,6 +48,10 @@
 #                         pressure solve runs in Float64 regardless (--pressure_solver): in Float32
 #                         it is unstable on the full 512 km domain (see README).
 #                         Single precision is standard for GPU runs of this kind.
+#   --microphysics=one_moment|p3
+#                         one_moment (default): Breeze's mixed-phase one-moment scheme (cloud
+#                         liquid, cloud ice, rain, snow). p3: P3, closest to CM1's ptype = 5 but not
+#                         production ready; it isn't precompiled, so it compiles at startup.
 #   --small_test          32×16 columns (16 km × 8 km), 1 h: a quick check that the code
 #                         runs, not a scientific configuration.
 #   --restart             continue from the latest checkpoint in the current directory.
@@ -95,8 +100,9 @@
 #   <prefix>_fields.nc       3D snapshots, daily (every 30 min with --small_test)
 #   <prefix>_checkpoint_iteration<N>.jld2   restart file; only the latest is kept
 # Variables: u, v, w (m/s), theta (liquid-ice potential temperature, K), T (K),
-# qv (specific humidity, kg/kg), P3 microphysics mass fractions qcl, qr, qi, qf, qwi
-# (kg/kg), numbers nr, ni (per kg of air) and rime volume bf (m3/kg). Each variable
+# qv (specific humidity, kg/kg) and the microphysics fields: one-moment mass fractions qcl, qci,
+# qr, qsn and totals ql, qi (kg/kg); P3 mass fractions qcl, qr, qi, qf, qwi (kg/kg), numbers nr, ni
+# (per kg of air) and rime volume bf (m3/kg). Each variable
 # carries units and long_name attributes.
 #
 # Compilation: the model code lives in the precompiled package ./MonsoonConvection
@@ -117,7 +123,7 @@ include(joinpath(@__DIR__, "helpers", "preflight.jl"))
 flags = try
     f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
                                "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval",
-                               "unbounded_advection", "sedimentation_cfl", "theta_sedimentation_fix"))
+                               "unbounded_advection", "sedimentation_cfl", "theta_sedimentation_fix", "microphysics"))
     for name in ("small_test", "restart", "debug_nan", "unbounded_advection", "sedimentation_cfl",
                  "theta_sedimentation_fix")
         get(f, name, "true") == "true" || error("--$name takes no value")
@@ -128,6 +134,7 @@ flags = try
     haskey(f, "stop_time") && parse_duration(f["stop_time"])
     haskey(f, "wall_time") && parse_duration(f["wall_time"])
     get(f, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
+    get(f, "microphysics", "one_moment") in ("one_moment", "p3") || error("--microphysics must be one_moment or p3")
     haskey(f, "sponge_timescale") && parse_duration(f["sponge_timescale"])
     haskey(f, "checkpoint_interval") && parse_duration(f["checkpoint_interval"])
     get(f, "arch", "cpu") == "gpu" && require_gpu()
@@ -220,7 +227,11 @@ z_faces = stretched_top_faces(Δz_top = 1000)
 # Scalar advection: bounded WENO by default; --unbounded_advection for comparison
 bounded_scalar_advection = !haskey(flags, "unbounded_advection")
 
-model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate, bounded_scalar_advection)
+# Microphysics (--microphysics): one_moment (default) or p3
+microphysics = Symbol(get(flags, "microphysics", "one_moment"))
+
+model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate, bounded_scalar_advection,
+                    microphysics)
 
 #####
 ##### Initial conditions (CM1 irandp = 1: ±0.25 K random θ perturbations)
@@ -279,7 +290,7 @@ using Oceananigans.Grids: znodes
 
 if haskey(flags, "debug_nan")
     # A NaN reaches every prognostic field within one step (through the pressure solve), so
-    # prognostic fields can't show where it started. Diagnostic fields (temperature, P3
+    # prognostic fields can't show where it started. Diagnostic fields (temperature, microphysics
     # diagnostics and fall speeds, TKE diffusivities, radiative heating) are computed from the
     # state each step and feed the next one: a NaN produced by one of them shows up there first,
     # localized. So check everything every iteration, and list each field with bad points.
@@ -298,7 +309,8 @@ if haskey(flags, "debug_nan")
             where_min(f) = (data = Array(interior(f)); (v, I) = findmin(data); (v, Array(znodes(f))[I[3]]))
             K, zK = where_max(m.closure_fields.Kᵘ)
             T, zT = where_max(m.temperature)
-            nⁱ, znⁱ = where_max(μ.nⁱ)
+            # ice number: P3 only
+            ice_number = haskey(μ, :nⁱ) ? (@sprintf("max nⁱ = %.3g /kg at z = %.0f m, ", where_max(μ.nⁱ)...)) : ""
             F⁺, zF⁺ = where_max(m.radiation.flux_divergence)
             F⁻, zF⁻ = where_min(m.radiation.flux_divergence)
             Tᵗᵒᵖ = Array(interior(m.temperature))[:, :, end]          # top cell
@@ -311,8 +323,8 @@ if haskey(flags, "debug_nan")
             @printf("debug iter %d, t = %s, Δt = %.2f s: max|w| = %.3g, min T = %.1f, max T = %.1f at z = %.0f m, max qcl = %.3g, qr = %.3g, qi = %.3g g/kg, max Kᵘ = %.3g at z = %.0f m\n",
                     iteration(sim), prettytime(sim), sim.Δt, maximum(abs, m.velocities.w), minimum(m.temperature),
                     T, zT, 1e3maximum(μ.qᶜˡ), 1e3maximum(μ.qʳ), 1e3maximum(μ.qⁱ), K, zK)
-            @printf("    top cell T ∈ [%.2f, %.2f] K, max nⁱ = %.3g /kg at z = %.0f m, Fᴿ ∈ [%.3g at z = %.0f m, %.3g at z = %.0f m] W/m³\n",
-                    minimum(Tᵗᵒᵖ), maximum(Tᵗᵒᵖ), nⁱ, znⁱ, F⁻, zF⁻, F⁺, zF⁺)
+            @printf("    top cell T ∈ [%.2f, %.2f] K, %sFᴿ ∈ [%.3g at z = %.0f m, %.3g at z = %.0f m] W/m³\n",
+                    minimum(Tᵗᵒᵖ), maximum(Tᵗᵒᵖ), ice_number, F⁻, zF⁻, F⁺, zF⁺)
             # horizontal wavelength of the top-cell T anomaly, from sign changes along x
             Tᵃ = Tᵗᵒᵖ .- sum(Tᵗᵒᵖ) / length(Tᵗᵒᵖ)
             nx = size(Tᵃ, 1)

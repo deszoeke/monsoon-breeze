@@ -1,8 +1,18 @@
-# Switching from P3 to single-moment microphysics (2026-10-11)
+# Switching from P3 to single-moment microphysics (2026-10-11; implemented 2026-10-12)
 
 P3 in Breeze is not production ready, and the NaN at ~17.5 h (`nan_investigation.md`) first shows
-up in the P3 ice number. This note covers switching to single-moment microphysics. Nothing has been
-changed yet.
+up in the P3 ice number. This note covers switching to single-moment microphysics.
+
+**Implemented 2026-10-12:** `build_model(; microphysics = :one_moment)` (default) or `:p3`; driver
+flag `--microphysics=one_moment|p3`. One-moment is mixed-phase non-equilibrium (MPNE1M, as in
+Breeze's tests and the colleague's setup): prognostic `ρqᶜˡ, ρqᶜⁱ, ρqʳ, ρqˢⁿ`, fall speeds
+`wᶜˡ, wᶜⁱ, wʳ, wˢⁿ`. `CloudMicrophysics` and `SpecialFunctions` are package dependencies (they load
+Breeze's extension; the constructor comes from `Base.get_extension`). Only one-moment is in the
+precompile workload; P3 compiles at startup. `--theta_sedimentation_fix` handles both schemes.
+CPU-tested; not yet run on the GPU. CPU warm-bubble test (32×16, 45 min, θ fix and sedimentation
+CFL): deep cloud, max w 47 m/s, qcl 7.2, qci 2.2, qr 5.8, qsn 12 g/kg, no NaN; qr dips to
+−1.7×10⁻³ g/kg despite bounded advection (watch in the full run). Breeze's mixed-phase one-moment has no negative-moisture
+correction ("not yet implemented"), so keep bounded advection.
 
 ## Microphysics schemes Breeze offers (Breeze `SiwJe`)
 
@@ -27,26 +37,20 @@ The graphify graph of Breeze covers `src/` only, not `ext/`. Read the extension 
   - non-equilibrium: `NonEquilibriumCloudFormation(nothing, CloudIce())` (`MixedPhaseNonEquilibrium1M`)
   - saturation adjustment: `SaturationAdjustment(equilibrium = MixedPhaseEquilibrium())` (`MixedPhase1M`)
   - Constructor: `one_moment_microphysics.jl:160`. Mixed-phase type aliases: lines 421–437.
-- **Where to change it:** `MonsoonConvection/src/MonsoonConvection.jl:310`
-  (`microphysics = on_architecture(arch, P3Microphysics())`). Changing the scheme type forces a
-  full recompile (comment at line 183).
-- **Other code to update:**
-  - Initial conditions: the P3 fields (`qi`, `qf`, `qwi`, ice number) have to map onto 1M cloud ice
-    and snow. The CM1 case uses ptype = 5 (`monsoon_convection.jl:15`).
-  - `--debug_nan` diagnostics and `sedimentation_rate_profile` in `monsoon_convection.jl`
-    (~lines 272–315) read P3 microphysical fields.
-  - Output field lists that name P3 fields.
-  - Restarts from P3 checkpoints (e.g. iteration 7699) won't carry over. A 1M run starts from t = 0.
+- **What had to change** (done): the microphysics choice (`microphysics_scheme` in
+  `MonsoonConvection.jl`), `fall_speed_names` (adds `wᶜⁱ, wˢⁿ`), output long names, the `nⁱ` line
+  in `--debug_nan`, and the θ fix's field lists. Initial conditions needed nothing:
+  `set_initial_conditions!` sets only θ, qᵗ, u, v. Scalar bounds and outputs were already generic.
+- Restarts from P3 checkpoints (e.g. iteration 7699) won't carry over. A 1M run starts from t = 0.
 - **The sedimentation problem doesn't go away.** One-moment rain and snow still fall through the
   50 m bottom cell, so keep `--sedimentation_cfl`. One-moment does remove the P3 ice-number blow-up
   that `adv_bounded` hit first.
-- **The θˡⁱ sedimentation leak** (`nan_investigation.md`) affects one-moment too. Adapt
-  `helpers/theta_sedimentation_correction.jl` to the 1M fields (liquid ρqᶜˡ, ρqʳ; ice ρqᶜⁱ, ρqˢⁿ,
-  with velocities wᶜˡ, wʳ, wᶜⁱ, wˢⁿ), as in the colleague's original patch.
+- **The θˡⁱ sedimentation leak** (`nan_investigation.md`) affects one-moment too.
+  `--theta_sedimentation_fix` uses liquid ρqᶜˡ, ρqʳ and ice ρqᶜⁱ, ρqˢⁿ. Column check: a 2 g/kg rain
+  layer gives −0.16 K s⁻¹ below it, a snow layer (0.9 m s⁻¹) −0.021 K s⁻¹ (sublimation latent heat).
 
 ## Plan
 
-1. Wait for `sed_cfl` and `conv_64` (`STATUS.md`). If `sed_cfl` gets past iteration 7934, the P3
-   run can continue while the 1M version is set up alongside it.
-2. Add the one-moment option behind a flag (e.g. `--one_moment`), so P3 stays available.
-3. Test on CPU with `--small_test`, then run the full case on `aerosmith`.
+1. Last P3 test: `p3_fixes` (`STATUS.md`).
+2. Then the full one-moment run on `aerosmith` from t = 0, with `--theta_sedimentation_fix
+   --sedimentation_cfl --debug_nan --checkpoint_interval=1h`. Re-precompile on the cluster first.

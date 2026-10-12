@@ -1,6 +1,6 @@
 # Correct the liquid-ice potential temperature for hydrometeor sedimentation. Included by
-# monsoon_convection.jl with --theta_sedimentation_fix; not run directly. Adapted to P3 from a
-# colleague's one-moment patch.
+# monsoon_convection.jl with --theta_sedimentation_fix; not run directly. From a colleague's
+# one-moment patch, extended to P3.
 #
 # Why: Breeze diagnoses T = Π θˡⁱ + (ℒˡ qˡ + ℒⁱ qⁱ) / cᵖᵐ, but its ρθ tendency has no sedimentation
 # term. When condensate falls, qˡ and qⁱ change at fixed θˡⁱ, so T changes by ℒ Δq / cᵖᵐ: cells
@@ -10,10 +10,10 @@
 #
 # How: a TendencyCallsite callback adds to Gρθ, at each RK stage, the term that keeps T fixed,
 #     Δ(ρθ) = −(ℒˡ Sˡ + ℒⁱ Sⁱ) / (cᵖᵐ Π),
-# where S is the sedimentation convergence of liquid (cloud, rain, liquid on ice) and of ice
-# (rime is part of ρqⁱ, so it isn't counted again). Π and cᵖᵐ are Breeze's, from the reference
-# pressure and the current moisture. The fluxes are first-order upwind, whereas Breeze sediments
-# with the model's WENO scheme, so the correction cancels the leak only to that accuracy.
+# where Sˡ and Sⁱ are the sedimentation convergences of all liquid and all ice species
+# (sedimenting_species below). Π and cᵖᵐ are Breeze's, from the reference pressure and the current
+# moisture. The fluxes are first-order upwind, whereas Breeze sediments with the model's WENO
+# scheme, so the correction cancels the leak only to that accuracy.
 
 using Breeze, Oceananigans
 using Breeze.Thermodynamics: MoistureMassFractions, mixture_gas_constant, mixture_heat_capacity
@@ -31,13 +31,19 @@ using Oceananigans.Operators: Δzᶜᶜᶜ
     return -(F₊ - F₋) / Δzᶜᶜᶜ(i, j, k, grid)
 end
 
-@inline function θ_sedimentation_correction(i, j, k, grid, μ, pᵣ, pˢᵗ, constants)
-    Sˡ = sedimentation_convergence(i, j, k, grid, μ.ρqᶜˡ, μ.wᶜˡ) +
-         sedimentation_convergence(i, j, k, grid, μ.ρqʳ,  μ.wʳ)  +
-         sedimentation_convergence(i, j, k, grid, μ.ρqʷⁱ, μ.wⁱ)
-    Sⁱ = sedimentation_convergence(i, j, k, grid, μ.ρqⁱ,  μ.wⁱ)
+# Sums over tuples of (ρq, w) pairs and of q fields, unrolled for GPU kernels
+@inline total_convergence(i, j, k, grid, ::Tuple{}) = 0
+@inline total_convergence(i, j, k, grid, species::Tuple) =
+    sedimentation_convergence(i, j, k, grid, species[1]...) + total_convergence(i, j, k, grid, Base.tail(species))
 
-    @inbounds q = MoistureMassFractions(μ.qᵛ[i, j, k], μ.qᶜˡ[i, j, k] + μ.qʳ[i, j, k] + μ.qʷⁱ[i, j, k], μ.qⁱ[i, j, k])
+@inline total(i, j, k, ::Tuple{}) = 0
+@inline total(i, j, k, q::Tuple) = @inbounds q[1][i, j, k] + total(i, j, k, Base.tail(q))
+
+@inline function θ_sedimentation_correction(i, j, k, grid, liquid, ice, qᵛ, qˡ, qⁱ, pᵣ, pˢᵗ, constants)
+    Sˡ = total_convergence(i, j, k, grid, liquid)
+    Sⁱ = total_convergence(i, j, k, grid, ice)
+
+    q = @inbounds MoistureMassFractions(qᵛ[i, j, k], total(i, j, k, qˡ), total(i, j, k, qⁱ))
     cᵖᵐ = mixture_heat_capacity(q, constants)
     Π = @inbounds (pᵣ[i, j, k] / pˢᵗ)^(mixture_gas_constant(q, constants) / cᵖᵐ)
 
@@ -46,15 +52,35 @@ end
     return -(ℒˡ * Sˡ + ℒⁱ * Sⁱ) / (cᵖᵐ * Π)
 end
 
+"""
+Liquid and ice (ρq, w) pairs that sediment, and the specific-humidity fields that make up qˡ
+and qⁱ, for the model's microphysics:
+- one-moment (mixed phase): liquid = cloud liquid, rain; ice = cloud ice, snow.
+- P3: liquid = cloud liquid, rain, liquid on ice (which falls with the ice); ice = ice (rime is
+  part of ρqⁱ, so it isn't counted again).
+"""
+function sedimentation_species(μ)
+    if haskey(μ, :ρqˢⁿ)        # one-moment, mixed phase
+        liquid = ((μ.ρqᶜˡ, μ.wᶜˡ), (μ.ρqʳ, μ.wʳ))
+        ice    = ((μ.ρqᶜⁱ, μ.wᶜⁱ), (μ.ρqˢⁿ, μ.wˢⁿ))
+        qˡ, qⁱ = (μ.qᶜˡ, μ.qʳ), (μ.qᶜⁱ, μ.qˢⁿ)
+    elseif haskey(μ, :ρqʷⁱ)    # P3
+        liquid = ((μ.ρqᶜˡ, μ.wᶜˡ), (μ.ρqʳ, μ.wʳ), (μ.ρqʷⁱ, μ.wⁱ))
+        ice    = ((μ.ρqⁱ, μ.wⁱ),)
+        qˡ, qⁱ = (μ.qᶜˡ, μ.qʳ, μ.qʷⁱ), (μ.qⁱ,)
+    else
+        error("--theta_sedimentation_fix supports mixed-phase one-moment and P3 microphysics only")
+    end
+    return liquid, ice, qˡ, qⁱ
+end
+
 function add_theta_sedimentation_correction!(simulation)
     model = simulation.model
-    grid = model.grid
+    μ = model.microphysical_fields
+    liquid, ice, qˡ, qⁱ = sedimentation_species(μ)
     reference_state = model.dynamics.reference_state
-    # only the fields the kernel reads (the full set also holds non-Field entries)
-    μ = NamedTuple(n => model.microphysical_fields[n]
-                   for n in (:ρqᶜˡ, :ρqʳ, :ρqʷⁱ, :ρqⁱ, :wᶜˡ, :wʳ, :wⁱ, :qᵛ, :qᶜˡ, :qʳ, :qʷⁱ, :qⁱ))
     correction = Field(KernelFunctionOperation{Center, Center, Center}(
-        θ_sedimentation_correction, grid, μ,
+        θ_sedimentation_correction, model.grid, liquid, ice, μ.qᵛ, qˡ, qⁱ,
         reference_state.pressure, reference_state.standard_pressure, model.thermodynamic_constants))
 
     function correct_θ_tendency!(model)
