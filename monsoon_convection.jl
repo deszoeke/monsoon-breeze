@@ -77,9 +77,9 @@
 #   --theta_sedimentation_fix  correct θˡⁱ for falling hydrometeors: Breeze's θ tendency has no
 #                         sedimentation term, so falling condensate changes T by ℒ Δq / cᵖ
 #                         (helpers/theta_sedimentation_correction.jl)
-#   --implicit_rain_sink  make the cold rain sinks of one-moment microphysics (snow and cloud ice
-#                         collecting rain) backward-Euler, so they can't take more rain than a cell
-#                         holds (helpers/implicit_rain_sink_correction.jl)
+#   --implicit_rain_sink  make the rain–snow collection sinks of one-moment microphysics backward-
+#                         Euler: rain lost to snow and cloud ice below 0 °C, snow lost to rain above.
+#                         They can't take more than a cell holds (helpers/implicit_rain_sink_correction.jl)
 #   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
 #                         --small_test). Only the latest is kept, and none is written when a run
 #                         ends in NaN, so use a short interval to be able to restart just before
@@ -283,7 +283,7 @@ if haskey(flags, "theta_sedimentation_fix")
     Base.invokelatest(add_theta_sedimentation_correction!, simulation)
 end
 
-# --implicit_rain_sink: backward-Euler cold rain sinks, so rain can't go negative from them
+# --implicit_rain_sink: backward-Euler rain–snow collection sinks, so rain and snow can't go negative from them
 if haskey(flags, "implicit_rain_sink")
     include(joinpath(@__DIR__, "helpers", "implicit_rain_sink_correction.jl"))
     Base.invokelatest(add_implicit_rain_sink_correction!, simulation)

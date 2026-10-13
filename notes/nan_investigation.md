@@ -74,3 +74,17 @@ different vertical levels. Our Float32 pressure-solve instability came from the 
 stratified column on the 512 km domain, so it may depend on the levels and domain.) Ice number blowing up in P3 remains the proximate cause. Switching to one-moment
 (`one_moment_microphysics.md`).
 
+
+## One-moment: negative rain and snow at the melting level (2026-10-12 – 13)
+
+No NaN, but condensate goes negative at 4–5 km.
+- **Rain:** the cause was snow and cloud ice collecting rain below 0 °C. The sink is explicit and
+  uncapped, with τ ≈ 0.6–4 s against Δt ≈ 4–5 s. The CloudMicrophysics rate was checked by hand
+  and is correct; it is fast because of the snow N₀.
+  - Fix: `--implicit_rain_sink`.
+  - First run with it (GH200, iterations 63500–64170): rain minimum −0.0073 g/kg, down from as
+    low as −2 g/kg.
+- **Snow:** with rain fixed, snow went negative just above 0 °C (worst −0.34 g/kg). The cause is
+  the mirror image: rain collecting snow, plus warm-accretion melting, again explicit and uncapped.
+  - The fix was extended to this sink. Not yet tested in a run.
+- Details and numbers are in `STATUS.md`.

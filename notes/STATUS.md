@@ -105,15 +105,26 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     exactly qʳ/(1 + Δt/τ).
   - A 2-minute `--small_test` on the CPU runs. It had no rain yet, so the correction wasn't
     exercised in a model.
-- **The fix is untested in a run.** The log of iterations 63100–63490 (rain minimum −0.03 to
-  −2.05 g/kg, snow −0.002 to −0.04 g/kg) came from the old run without the fix. It shows the
-  scatter of the negatives before the fix; it says nothing about whether the fix works.
-  - The run with `--implicit_rain_sink --debug_nan` was submitted 2026-10-13 and is waiting in
-    the queue.
-  - **Next:** summarise its log with `helpers/log_summary.sh <log>`.
-    - Negatives gone, or much smaller: the cold sink was the cause.
-    - Still at 4–5 km with T < 273.15 K: suspect the callback.
-    - At rain edges, the bottom cell or cloud top: it's advection.
+- **First run with the fix (GH200 youmu, restart from 63496, iterations 63500–64170, 2026-10-13).**
+  - The log from before the fix (iterations 63100–63490) had rain minima of −0.03 to −2.05 g/kg
+    and snow minima of −0.002 to −0.04 g/kg.
+  - **Rain is fixed.** 13 violations, all at 4–5 km. The worst is −0.0073 g/kg, about 300× smaller
+    than before.
+  - **Snow got worse.** 68 violations, 57 of them at 4–5 km and 56 with T ≥ 273.15 K. The worst is
+    −0.34 g/kg at (461, 232, 19), T = 272.87 K.
+  - Cloud ice: −5×10⁻⁹, round-off. No NaN.
+  - Cause: the warm-branch mirror of the rain problem. Above Tᶠ, rain collecting snow (Sˢⁿʳ) plus
+    the melt terms α(Sʳˢⁿ + Sᵃᶜᶜˡˢⁿ) remove snow explicitly, with no cap
+    (`one_moment_microphysics.jl:1287-1292`). Keeping rain positive leaves more rain at the
+    melting level, which feeds this sink.
+- **Fix extended (2026-10-13).** `--implicit_rain_sink` now also makes the warm snow sink
+  backward-Euler. The correction moves Δ = δʳ − δˢⁿ from snow to rain.
+  - Kernel check at Δt = 5 s, 274 K, 2 g/kg rain and 1.57 g/kg snow: an explicit step leaves snow
+    at −0.147 g/kg, the corrected step at 1.21 g/kg. The cold cases are unchanged, and water is
+    conserved exactly.
+  - **Next:** rerun from 63496 with the same flags, then run `helpers/log_summary.sh`. Any snow
+    negatives that remain at snow edges, or on the cold side, would point to advection or to cells
+    crossing Tᶠ between RK stages.
 - **Log workflow:** don't paste raw logs. Paste the `helpers/log_summary.sh` output: the last
   progress line, NaN/errors, and per field the count, worst value, and where the extremes are by
   height and temperature.

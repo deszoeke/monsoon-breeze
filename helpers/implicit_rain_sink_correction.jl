@@ -1,47 +1,68 @@
-# Make the rain sinks of Breeze's mixed-phase one-moment microphysics implicit. Included by
-# monsoon_convection.jl with --implicit_rain_sink; not run directly.
+# Make the rain–snow collection sinks of Breeze's mixed-phase one-moment microphysics implicit.
+# Included by monsoon_convection.jl with --implicit_rain_sink; not run directly.
 #
-# Why: below Tᶠ = 273.15 K, snow collecting rain (Sʳˢⁿ) and ice–rain collisions (Sᵃᶜᶜʳⁱ) remove
-# rain explicitly and are not limited by the rain available. With the default parameters the
-# snow-collects-rain timescale is τ ≈ 0.6–4 s at 1.6 g/kg snow, shorter than Δt ≈ 4 s, so one step
-# takes more rain than the cell holds and leaves qʳ < 0 at the melting level
-# (helpers/rain_snow_accretion_check.jl; Gaudet & Schmidt 2007 on collection overdepletion).
+# Why: rain and snow collect each other, and the losing species' sink is explicit and not limited
+# by what the cell holds. With the default parameters the collection timescales are ~0.6–4 s at
+# g/kg amounts, shorter than Δt ≈ 4–5 s, so one step can take more than the cell holds:
+#   - cold (T < Tᶠ = 273.15 K): rain → snow by snow collecting rain (Sʳˢⁿ) and ice–rain
+#     collisions (Sᵃᶜᶜʳⁱ, all T); rain went negative at the melting level
+#     (helpers/rain_snow_accretion_check.jl; Gaudet & Schmidt 2007 on collection overdepletion);
+#   - warm (T ≥ Tᶠ): snow → rain by rain collecting snow (Sˢⁿʳ) and snow melted by accreted warm
+#     rain and cloud liquid (α Sʳˢⁿ, α Sᵃᶜᶜˡˢⁿ); snow went negative just below the melting level
+#     once rain was fixed (log of 2026-10-13, iterations 63500–64170).
+# The routing is mpne1m_tendencies' (ext/BreezeCloudMicrophysicsExt/one_moment_microphysics.jl:1287-1292).
 #
-# How: the sink is about linear in qʳ, S = qʳ/τ. A TendencyCallsite callback replaces Breeze's
-# explicit S by the backward-Euler S/(1 + Δt S/qʳ) = qʳ/(τ + Δt). It adds the difference
-#     δ = ρ S x / (1 + x),   x = Δt S / qʳ = Δt/τ,
-# to Gρqʳ and subtracts it from Gρqˢⁿ (both sinks feed snow), so water is conserved. θˡⁱ needs
-# no change: it is conserved through phase changes, and Breeze has no microphysical ρθ tendency.
-# The rates are Breeze's own, recomputed from the same parameters, ρ and T. Δt is the full step,
-# which is the stage step of SSP-RK3 and errs on the strong side for other RK schemes.
+# How: each sink is about linear in its species, S = q/τ. A TendencyCallsite callback replaces
+# Breeze's explicit S by the backward-Euler S/(1 + Δt S/q) = q/(τ + Δt), i.e. adds back
+#     δ = ρ S x / (1 + x),   x = Δt S / q = Δt/τ,
+# to the losing species and takes it from the gaining one, so water is conserved. Rain and snow
+# exchange only with each other here, so one net field moves Δ = δʳ − δˢⁿ from snow to rain.
+# θˡⁱ needs no change: it is conserved through phase changes, and Breeze has no microphysical ρθ
+# tendency. The rates are Breeze's own, recomputed from the same parameters, ρ and T. Δt is the
+# full step, which is the stage step of SSP-RK3 and errs on the strong side for other RK schemes.
 
 using Breeze, Oceananigans
 using Oceananigans: TendencyCallsite
 
 const RainSinkExt = Base.get_extension(Breeze, :BreezeCloudMicrophysicsExt)
 
-@inline function implicit_rain_sink_correction(i, j, k, grid, ρ, T, ρqʳ, ρqˢⁿ, ρqᶜⁱ, parameters, Tᶠ, Δt)
+# Backward-Euler correction ρ S x/(1+x) for a sink S of species q; S is gated to 0 for q ≤ ε
+@inline function implicit_excess(ρ, S, q, Δt)
+    x = Δt * S / max(q, floatmin(q))
+    return ρ * S * x / (1 + x)
+end
+
+@inline function implicit_rain_sink_correction(i, j, k, grid, ρ, T, ρqʳ, ρqˢⁿ, ρqᶜⁱ, ρqᶜˡ,
+                                               parameters, Tᶠ, constants, Δt)
     @inbounds begin
         ρᵢ = ρ[i, j, k]
         qʳ = ρqʳ[i, j, k] / ρᵢ
         qˢⁿ = ρqˢⁿ[i, j, k] / ρᵢ
         qᶜⁱ = ρqᶜⁱ[i, j, k] / ρᵢ
+        qᶜˡ = ρqᶜˡ[i, j, k] / ρᵢ
         Tᵢ = T[i, j, k]
     end
     rain, snow = parameters.precip.rain, parameters.precip.snow
     rain_velocity, snow_velocity = parameters.terminal_velocity.rain, parameters.terminal_velocity.snow
     process = parameters.process_params
 
-    # The same calls as mpne1m_tendencies: rain collected by snow (cold branch only) and by cloud ice
+    # The same calls as mpne1m_tendencies
     Sʳˢⁿ = RainSinkExt.rain_snow_accretion(process.rain_snow_accretion, snow, rain,
                                            snow_velocity, rain_velocity, qˢⁿ, qʳ, ρᵢ)
+    Sˢⁿʳ = RainSinkExt.rain_snow_accretion(process.rain_snow_accretion, rain, snow,
+                                           rain_velocity, snow_velocity, qʳ, qˢⁿ, ρᵢ)
     Sᵃᶜᶜʳⁱ = RainSinkExt.rain_sink_accretion(process.cloud_ice_rain_accretion, rain, parameters.cloud.ice,
                                              rain_velocity, qᶜⁱ, qʳ, ρᵢ)
-    S = Sᵃᶜᶜʳⁱ + ifelse(Tᵢ < Tᶠ, Sʳˢⁿ, zero(Sʳˢⁿ))
+    Sᵃᶜᶜˡˢⁿ = RainSinkExt.cloud_precipitation_accretion(process.cloud_liquid_snow_accretion,
+                                                       parameters.cloud.liquid, snow, snow_velocity, qᶜˡ, qˢⁿ, ρᵢ)
+    α = RainSinkExt.warm_accretion_melt_factor(Tᵢ, Tᶠ, constants)
+    is_warm = Tᵢ ≥ Tᶠ
 
-    # Both rates are gated to 0 for qʳ ≤ ε, so x = 0 there
-    x = Δt * S / max(qʳ, floatmin(qʳ))
-    return ρᵢ * S * x / (1 + x)
+    Sʳ = Sᵃᶜᶜʳⁱ + ifelse(is_warm, zero(Sʳˢⁿ), Sʳˢⁿ)                       # rain → snow
+    Sˢⁿ = ifelse(is_warm, Sˢⁿʳ + α * (Sʳˢⁿ + Sᵃᶜᶜˡˢⁿ), zero(Sˢⁿʳ))      # snow → rain
+
+    # Net mass to move from snow back to rain
+    return implicit_excess(ρᵢ, Sʳ, qʳ, Δt) - implicit_excess(ρᵢ, Sˢⁿ, qˢⁿ, Δt)
 end
 
 function add_implicit_rain_sink_correction!(simulation)
@@ -52,15 +73,16 @@ function add_implicit_rain_sink_correction!(simulation)
     categories = model.microphysics.categories
     ρ = Breeze.AtmosphereModels.total_density(model.dynamics)
     FT = eltype(model.grid)
-    δ = CenterField(model.grid)   # storage reused every stage; Δt changes, so the operation is rebuilt
+    Δ = CenterField(model.grid)   # storage reused every stage; Δt changes, so the operation is rebuilt
 
     function correct_rain_sink!(model)
         correction = KernelFunctionOperation{Center, Center, Center}(
-            implicit_rain_sink_correction, model.grid, ρ, model.temperature, μ.ρqʳ, μ.ρqˢⁿ, μ.ρqᶜⁱ,
-            categories.parameters, categories.freezing_temperature, FT(simulation.Δt))
-        compute!(Field(correction; data = δ.data))
-        interior(model.timestepper.Gⁿ.ρqʳ) .+= interior(δ)
-        interior(model.timestepper.Gⁿ.ρqˢⁿ) .-= interior(δ)
+            implicit_rain_sink_correction, model.grid, ρ, model.temperature,
+            μ.ρqʳ, μ.ρqˢⁿ, μ.ρqᶜⁱ, μ.ρqᶜˡ, categories.parameters, categories.freezing_temperature,
+            model.thermodynamic_constants, FT(simulation.Δt))
+        compute!(Field(correction; data = Δ.data))
+        interior(model.timestepper.Gⁿ.ρqʳ) .+= interior(Δ)
+        interior(model.timestepper.Gⁿ.ρqˢⁿ) .-= interior(Δ)
         return nothing
     end
 
