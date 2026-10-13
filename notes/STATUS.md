@@ -122,9 +122,19 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   - Kernel check at Δt = 5 s, 274 K, 2 g/kg rain and 1.57 g/kg snow: an explicit step leaves snow
     at −0.147 g/kg, the corrected step at 1.21 g/kg. The cold cases are unchanged, and water is
     conserved exactly.
-  - **Next:** rerun from 63496 with the same flags, then run `helpers/log_summary.sh`. Any snow
-    negatives that remain at snow edges, or on the cold side, would point to advection or to cells
-    crossing Tᶠ between RK stages.
+- **Second run, with the extended fix (GH200, iterations 64180–64780).**
+  - Snow: worst −0.036 g/kg, 10× better than −0.34. 61 violations; 60 of them warm, 44 at 3–4 km,
+    just below the melting level.
+  - Rain: worst −0.018 g/kg. 36 violations, all at 4–5 km, at about Tᶠ.
+  - Cloud ice: round-off. No NaN.
+  - The negatives are now about 0.3–0.4% of each field's maximum.
+  - The likely remainder: each sink is limited on its own, but not their sum. Snow melt (capped at
+    qˢⁿ/10 s, about half the snow per 5 s step) plus the implicit collection sink can together
+    exceed qˢⁿ where snow melts below the melting level. Cells crossing Tᶠ between RK stages could
+    also contribute.
+  - Judgment: small enough to carry on. A complete fix would limit each species' total sink to
+    q/Δt, which is a Breeze-level change and could be reported upstream along with the uncapped
+    collection sinks.
 - **Log workflow:** don't paste raw logs. Paste the `helpers/log_summary.sh` output: the last
   progress line, NaN/errors, and per field the count, worst value, and where the extremes are by
   height and temperature.
