@@ -375,9 +375,10 @@ end
 #
 # The bounds-preserving limiter assumes every cell value already lies within its bounds. If a
 # source (radiation, latent heating, microphysics) pushes a value outside, the limiter misbehaves.
-# Every 100 iterations (10 with --debug_nan), compare the specific value (e.g. θ = ρθ/ρᵣ,
-# q = ρq/ρᵣ) of each bounded scalar with its bounds and warn (once per field; every time with
-# --debug_nan). A relative tolerance of 1e-6 ignores round-off-level values such as -1e-18.
+# Every 10 iterations, compare the specific value (e.g. θ = ρθ/ρᵣ, q = ρq/ρᵣ) of each bounded
+# scalar with its bounds. The first violation of each field gets a full warning; with --debug_nan,
+# every violation then gets one line with the location, height and temperature of the offending
+# extreme. A relative tolerance of 1e-6 ignores round-off-level values such as -1e-18.
 
 using Oceananigans.Advection: BoundsPreservingWENO
 
@@ -388,6 +389,15 @@ if bounded_scalar_advection
         specific = NamedTuple(name => Field(prognostic_fields(m)[name] / ρᵣ) for name in bounded_names)
         warned = Set{Symbol}()
 
+        # Location of the minimum or maximum of f's interior. findmin/findmax run on the GPU when
+        # they can; otherwise (e.g. no GPU method for the view) the field is copied to the CPU.
+        function extreme_location(f, find)
+            data = interior(f)
+            value, I = try find(data) catch; find(Array(data)) end
+            return value, Tuple(I)
+        end
+        cell_value(f, i, j, k) = Array(view(interior(f), i:i, j:j, k:k))[1]
+
         function check_limiter_bounds(sim)
             for name in bounded_names
                 f = specific[name]
@@ -395,14 +405,23 @@ if bounded_scalar_advection
                 lo, hi = m.advection[name].bounds.minimum_value, m.advection[name].bounds.maximum_value
                 fmin, fmax = minimum(f), maximum(f)
                 tolerance = 1e-6 * max(abs(fmin), abs(fmax), eps(Float32))
-                if fmin < lo - tolerance || fmax > hi + tolerance
-                    if debug || name ∉ warned
-                        @warn "$name: specific value range [$fmin, $fmax] at iteration $(iteration(sim)) " *
-                              "(t = $(prettytime(sim))) is outside its advection bounds [$lo, $hi]. The " *
-                              "bounds-preserving limiter is unreliable there: check the sources or the bounds " *
-                              "(MonsoonConvection.scalar_bounds)."
-                    end
+                below, above = fmin < lo - tolerance, fmax > hi + tolerance
+                (below || above) || continue
+                if name ∉ warned
+                    @warn "$name: specific value range [$fmin, $fmax] at iteration $(iteration(sim)) " *
+                          "(t = $(prettytime(sim))) is outside its advection bounds [$lo, $hi]. The " *
+                          "bounds-preserving limiter is unreliable there: check the sources or the bounds " *
+                          "(MonsoonConvection.scalar_bounds)." *
+                          (debug ? " Further violations are reported one per line." : "")
                     push!(warned, name)
+                end
+                if debug
+                    value, (i, j, k) = extreme_location(f, below ? findmin : findmax)
+                    z = Array(znodes(f))[k]
+                    T = cell_value(m.temperature, i, j, k)
+                    @printf("bounds %-5s iter %d  t %s  range [%.3e, %.3e]  %s at (i, j, k) = (%d, %d, %d)  z = %.0f m  T = %.2f K\n",
+                            name, iteration(sim), prettytime(sim), fmin, fmax, below ? "min" : "max",
+                            i, j, k, z, T)
                 end
             end
             return nothing

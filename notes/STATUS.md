@@ -105,8 +105,19 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     exactly qʳ/(1 + Δt/τ).
   - A 2-minute `--small_test` on the CPU runs. It had no rain yet, so the correction wasn't
     exercised in a model.
-  - **Next:** restart one-moment from the latest checkpoint with `--implicit_rain_sink` and watch
-    the ρqʳ and ρqˢⁿ minima in the bounds warnings.
+- **Result of restarting with `--implicit_rain_sink` (iterations 63100–63490, 2026-10-13): rain
+  is still negative.**
+  - The ρqʳ minimum jumps between −0.03 and −2.05 g/kg from one 10-iteration check to the next.
+  - The ρqˢⁿ minimum is −0.002 to −0.04 g/kg.
+  - Either the callback isn't acting in the model, or the negatives come from advection or
+    sedimentation.
+  - **Next:** rerun with `--debug_nan`; the bounds check now prints where each extreme is, with z
+    and T. Summarise the log with `helpers/log_summary.sh <log>` on the cluster.
+    - Still near 4–5 km and T < 273.15 K: suspect the callback.
+    - At rain edges, the bottom cell or cloud top: it's advection.
+- **Log workflow:** don't paste raw logs. Paste the `helpers/log_summary.sh` output: the last
+  progress line, NaN/errors, and per field the count, worst value, and where the extremes are by
+  height and temperature.
 
 ## Tools added 2026-10-12
 
@@ -124,8 +135,7 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   reaches the log at once, and the idle GPU is chosen again inside the step. Not yet confirmed on a
   run: check that the log's GPU number matches what Julia uses.
 - With `--debug_nan`, the bounds check warns every 10 iterations (otherwise once per field). The
-  comment there wrongly says 100. Possible change: warn only on a new minimum, and print its
-  location.
+  comment is now fixed, and each violation prints its location, height and temperature.
 
 ## Earlier runs (P3, abandoned) on the cluster (`/ceoas/deszoeks/projects/monsoon-breeze/run/`)
 
