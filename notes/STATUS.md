@@ -96,6 +96,17 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     - Heymsfield et al. (2008, JAS) find exponential snow N₀ 5–30× larger than earlier
       assumptions (Lin's 3×10⁶). So the ClimaParams snow N₀ isn't unreasonable.
     - The fault is the missing cap, not the parameters.
+- **Fix: `--implicit_rain_sink` (`helpers/implicit_rain_sink_correction.jl`, 2026-10-12).**
+  - A TendencyCallsite callback turns the rain sinks into backward-Euler: the cold-branch Sʳˢⁿ
+    and Sᵃᶜᶜʳⁱ become S/(1 + Δt S/qʳ). The difference moves from snow back to rain, so water is
+    conserved and θˡⁱ is unchanged.
+  - Kernel check at the 63496 cell (Δt = 4 s, 272 K): one explicit step takes 2 / 0.5 / 0.1 g/kg
+    of rain to −12.3 / −1.41 / −0.10 g/kg. The corrected step gives 0.25 / 0.10 / 0.033 g/kg,
+    exactly qʳ/(1 + Δt/τ).
+  - A 2-minute `--small_test` on the CPU runs. It had no rain yet, so the correction wasn't
+    exercised in a model.
+  - **Next:** restart one-moment from the latest checkpoint with `--implicit_rain_sink` and watch
+    the ρqʳ and ρqˢⁿ minima in the bounds warnings.
 
 ## Tools added 2026-10-12
 
