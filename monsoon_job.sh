@@ -7,7 +7,8 @@
 #SBATCH --time=02:00:00           # short diagnostic runs; for long ones pass e.g. sbatch --time=48:00:00
 #SBATCH --output=slurm-%j.out
 
-# Breeze monsoon-convection run on one A100 GPU (partition ceoas-gpu).
+# Breeze monsoon-convection run on one A100 GPU (partition ceoas-gpu). For a Grace Hopper GH200
+# (partition ceoas-arm), submit monsoon_job_arm.sh the same way instead.
 #
 # Submit from the repository directory; arguments go to monsoon_convection.jl:
 #   sbatch monsoon_job.sh                      # first job
@@ -18,7 +19,18 @@
 
 set -euo pipefail
 
-export PATH="$HOME/.juliaup/bin:$PATH"     # juliaup's Julia 1.13, not the system julia
+# juliaup's Julia 1.13, not the system julia. x86 and ARM each have their own juliaup and depot (the
+# home directory is shared, and compiled code is per architecture). Set or unset everything in both
+# branches: sbatch copies the submitting shell's environment, which may be from the other architecture.
+if [ "$(uname -m)" = aarch64 ]; then        # Grace Hopper (monsoon_job_arm.sh)
+    export JULIAUP_DEPOT_PATH=$HOME/.juliaup-aarch64 JULIA_DEPOT_PATH=$HOME/.julia-aarch64
+    unset JULIA_CPU_TARGET
+    export PATH="$HOME/.juliaup-aarch64/bin:$PATH"
+else
+    unset JULIAUP_DEPOT_PATH JULIA_DEPOT_PATH
+    export JULIA_CPU_TARGET="haswell,-rdrnd"   # what the x86 depot was compiled with (~/.bashrc)
+    export PATH="$HOME/.juliaup/bin:$PATH"
+fi
 REPO=$SLURM_SUBMIT_DIR
 RUN=${RUN:-run}
 # Stop and checkpoint 10 min before the job's time limit (whatever --time it was given), unless

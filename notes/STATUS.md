@@ -136,6 +136,16 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 - With `--debug_nan`, the bounds check warns every 10 iterations (otherwise once per field). The
   comment is now fixed, and each violation prints its location, height and temperature.
 
+## Grace Hopper (ARM) setup, 2026-10-13
+
+- GH200 nodes (aarch64 CPU, one 480 GB GPU each) are in partition `ceoas-arm` (rime, youmu).
+  Submit with `monsoon_job_arm.sh`, used the same way as `monsoon_job.sh`. Avoid
+  `ceoas-arm-lowprio`: it requeues preempted jobs with their first arguments.
+- Julia 1.13.1 for aarch64 lives in `~/.juliaup-aarch64`, with its depot in `~/.julia-aarch64`.
+  The project is instantiated and precompiled there (about 5 min on rime, with no errors).
+- `monsoon_job.sh` picks the juliaup and depot by `uname -m`.
+- Not yet tested: CUDA on the GH200 (`using CUDA; CUDA.versioninfo()`) and a model run.
+
 ## Earlier runs (P3, abandoned) on the cluster (`/ceoas/deszoeks/projects/monsoon-breeze/run/`)
 
 | Run | Setup | Result |
