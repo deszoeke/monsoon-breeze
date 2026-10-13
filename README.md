@@ -479,7 +479,7 @@ after the script name go to `monsoon_convection.jl`:
 ```sh
 cd /ceoas/deszoeks/projects/monsoon-breeze
 A100="-p ceoas-gpu --gres=gpu:a100:1"           # x86_64 + A100 80 GB
-GH200="-p ceoas-arm --gres=gpu:gh200_480gb:1"   # aarch64 Grace Hopper, 480 GB
+GH200="-p ceoas-arm --gres=gpu:gh200_480gb:1"   # aarch64 Grace Hopper, 96 GB GPU (480 GB is CPU memory)
 sbatch $A100 monsoon_job.sh                    # first job
 sbatch $A100 monsoon_job.sh --restart          # each continuation, until the stop time
 jid=$(sbatch --parsable $A100 monsoon_job.sh)  # or chain a continuation behind it:

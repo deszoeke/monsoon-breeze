@@ -18,6 +18,14 @@ Full details are in `README.md`; this is the short version.
 julia --project setup_precompile.jl                    # after any package change (~2 min)
 julia --project monsoon_convection.jl --small_test --stop_time=10min --debug_nan
 ```
+I use the release version of julia (1.13.1) from juliaup.
+
+For reference, Julia 1.12.2 binaries are at 
+`/local/ceoas/x86_64/opt/julia/julia-1.12.2/bin/julia` and 
+`/local/ceoas/aarch64/opt/julia/julia-1.12.2/bin/julia`, 
+with the corresponding library paths at 
+`/local/ceoas/x86_64/opt/julia/julia-1.12.2/lib` and 
+`/local/ceoas/aarch64/opt/julia/julia-1.12.2/lib`. 
 
 ## Cluster
 

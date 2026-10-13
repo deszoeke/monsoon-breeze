@@ -138,7 +138,7 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 
 ## Grace Hopper (ARM) setup, 2026-10-13
 
-- GH200 nodes (aarch64 CPU, one 480 GB GPU each) are in partition `ceoas-arm` (rime, youmu).
+- GH200 nodes (aarch64 Grace CPU with 480 GB, one 96 GB Hopper GPU each) are in partition `ceoas-arm` (rime, youmu).
   Avoid `ceoas-arm-lowprio`: it requeues preempted jobs with their first arguments.
 - `monsoon_job.sh` names no hardware, so the partition and GPU go on the sbatch line:
   - `sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh ...` for an A100;
@@ -154,7 +154,12 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     resolve correctly, and the precompiled caches stay valid.
 - Julia 1.13.1 for aarch64 is installed, and the project is precompiled in `~/.julia-aarch64`
   (about 5 min on rime).
-- Not yet tested: CUDA on the GH200 (`using CUDA; CUDA.versioninfo()`) and a model run.
+- CUDA runtime pinned to 12.9 in the cluster's `LocalPreferences.toml`, which is gitignored and
+  shared by both architectures. The GH200 driver supports CUDA ≤ 12.9, and 13.2 failed there
+  (job 5780041). The A100 driver runs 12.9 too. The 13.2 file is kept as
+  `LocalPreferences.toml.bak-13.2`.
+  - After the pin, precompiling passed `Load check: ok` on x86_64 (5780151) and aarch64 (5780152).
+- Not yet tested: a model run on the GH200, or on the A100 with runtime 12.9.
 
 ## Earlier runs (P3, abandoned) on the cluster (`/ceoas/deszoeks/projects/monsoon-breeze/run/`)
 
