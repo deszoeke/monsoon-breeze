@@ -9,7 +9,7 @@ Breeze's tests and the colleague's setup): prognostic `ρqᶜˡ, ρqᶜⁱ, ρq�
 `wᶜˡ, wᶜⁱ, wʳ, wˢⁿ`. `CloudMicrophysics` and `SpecialFunctions` are package dependencies (they load
 Breeze's extension; the constructor comes from `Base.get_extension`). Only one-moment is in the
 precompile workload; P3 compiles at startup. `--theta_sedimentation_fix` handles both schemes.
-CPU-tested; not yet run on the GPU. CPU warm-bubble test (32×16, 45 min, θ fix and sedimentation
+CPU-tested. GPU run `run/one-moment` (2026-10-12) passed 18.5 h with no NaN but has negative rain down to −3.4 g/kg (see `STATUS.md`). CPU warm-bubble test (32×16, 45 min, θ fix and sedimentation
 CFL): deep cloud, max w 47 m/s, qcl 7.2, qci 2.2, qr 5.8, qsn 12 g/kg, no NaN; qr dips to
 −1.7×10⁻³ g/kg despite bounded advection (watch in the full run). Breeze's mixed-phase one-moment has no negative-moisture
 correction ("not yet implemented"), so keep bounded advection.
