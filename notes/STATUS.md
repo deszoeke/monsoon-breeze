@@ -31,6 +31,63 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   - cloud top or the sponge: the advection limiter;
   - isolated points: a microphysics source.
   Possible fixes: clip negatives after the microphysics step (conserving water), or a smaller CFL.
+- **Result at checkpoint 63496 (2026-10-12): the run is still alive and the negatives are small.**
+  - ρqʳ: min −0.355 g/kg (max 3.73) in 13 cells, one per column, all at k = 18–20
+    (4.3–5.25 km). That's the melting level, not the bottom cell and not cloud top. The domain-mean
+    negative water is −3.75×10⁻⁷ kg m⁻². The −3.36 g/kg patch from ~8670 is gone.
+  - ρqˢⁿ: min −0.0095 g/kg in 4 cells at k = 16–19, just below the snow's lower edge.
+  - ρqᶜˡ and ρqᶜⁱ: round-off only.
+  - In the column through the minimum (i, j = 294, 503), rain is negative (−0.355) at k = 19.
+    Below it rain is 1.9–3.1 g/kg; above it rain is about 0. The same cell has 1.57 g/kg snow and
+    1.43 g/kg cloud liquid, so it is saturated and evaporation can't be the cause.
+  - Two candidates are left. Neither is decided.
+    1. WENO sedimentation overshoot at the sharp rain top. The downward flux reconstructed at the
+       k = 18|19 face draws on the large rain in k = 18.
+    2. An unlimited rain–snow accretion or freezing sink at T < 0 °C.
+  - To tell them apart: T at the minimum, and whether Breeze's sedimentation uses the bounded
+    WENO.
+- **What the code says (code-reader, 2026-10-12; installed Breeze/CloudMicrophysics):**
+  - Sedimentation is not a separate flux. Each scalar is advected with w + w_fall through our
+    bounded WENO5 (`MonsoonConvection.jl:337-343`), which keeps the specific q in (0, 1).
+  - That bound holds only for Courant ≤ 5/18. Our wizard runs at CFL 0.7 of the tightest cell,
+    usually the 50 m bottom cell.
+  - `terminal_velocity` is 0 wherever q ≤ ε. No outflow cap.
+  - Mixed-phase one-moment (`mpne1m_tendencies`, `ext/BreezeCloudMicrophysicsExt/one_moment_microphysics.jl:1119-1311`)
+    is explicit, inside the RK stages.
+    - Below Tᶠ = 273.15 K, rain is removed by Sʳˢⁿ (snow collects rain) and Sᵃᶜᶜʳⁱ (ice–rain).
+      Both are uncapped and gated only by q > ε.
+    - Evaporation and melt are capped at q/10 s. There is no rain-freezing term.
+    - The only negative guard sets a negative species' microphysics tendency to −ρq/10 s and
+      takes the water from a partner. There is no post-step clip.
+    - `negative_moisture_correction` is not implemented for mixed phase (EXT:542).
+  - Defaults throughout: E(rain–snow) = 1, E(ice–rain) = 1. The driver overrides nothing.
+  - My assessment: an uncapped sink switches off as q → 0, so explicit overshoot from it should
+    give only small negatives. −0.355 g/kg more likely comes from the bounded-WENO bound breaking
+    at Courant > 5/18 at a sharp edge (rain top, snow bottom), possibly as the sum over x, y, z.
+    Two things weren't read yet: how θ is computed in Oceananigans
+    `bounds_preserving_tracer_advection_operators.jl`, and how the center-located wʳ reaches the
+    z-faces.
+  - **Superseded by the numbers below:** the cold rain–snow sink is stiff and does overshoot.
+- **T and rain-loss timescale at the minimum (computed with Breeze's own functions, 2026-10-12).**
+  The cell is (294, 503, 19), with ρᵣ = 0.7356 and pᵣ = 572.2 hPa.
+  - T = 273.34 K (+0.19 °C) with the stored values, and 274.27 K with qʳ clipped to 0. The cell
+    is just above Tᶠ = 273.15 K.
+  - The timescale for snow (1.57 g/kg) collecting rain, Sʳˢⁿ in the cold branch with defaults:
+    τ = 0.6 s at qʳ = 2 g/kg, 1.1 s at 0.5, 2 s at 0.1, 4.3 s at 0.01. Ice–rain τ is ≥ 11 s.
+  - Δt is about 4 s, so Δt/τ is about 2–7. The explicit step overshoots badly: a forward-Euler
+    step leaves qʳ(1 − Δt/τ).
+  - Freezing rain into snow warms the cell by ℒf Δq/cᵖ at fixed θˡⁱ, about 0.33 K per g/kg. That
+    can lift it above Tᶠ, where the sink switches off. This fits the cell sitting at +0.19 °C with
+    negative rain and plenty of snow.
+  - Hand check (`helpers/rain_snow_accretion_check.jl`): re-deriving the collection integral from
+    the CloudMicrophysics parameters reproduces the code's rate exactly. **Not a code bug.**
+  - It is 11–27× faster than Lin, Farley & Orville (1983) PSACR at the same q. Lin's τ is 6 s at
+    2 g/kg rain and 32 s at 0.1 g/kg.
+  - Most of the gap is the snow size distribution. ClimaParams gives n₀ˢⁿ = 4.36×10⁹ (ρqˢⁿ)^0.63,
+    which is 3.1×10⁷ m⁻⁴ per diameter here, against Lin's fixed 3×10⁶. That means many more,
+    smaller flakes (mean radius 0.46 mm). E(rain–snow) = 1 in both.
+  - Even Lin's τ is about Δt at high rain, so any explicit, uncapped version of this process is
+    marginal at Δt ≈ 4 s.
 
 ## Tools added 2026-10-12
 
@@ -40,7 +97,7 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   `julia --project helpers/negative_condensate.jl run/one-moment/monsoon_convection_checkpoint_iteration8980.jld2`.
   - Prints, per condensate field: the minimum and its location, the negative-cell count, the
     negatives by level, and the column through the rain minimum.
-  - Tested only on a fake checkpoint.
+  - Worked on the real checkpoint 63496.
   - It has a copy of the driver's `stretched_top_faces`; keep the two the same.
 - Checkpoint layout (Oceananigans `Checkpointer`): `simulation/model/fields/<name>/data` is the
   CPU parent array **including halos** (H = 5); the clock is at `simulation/model/clock/{iteration,time}`.
