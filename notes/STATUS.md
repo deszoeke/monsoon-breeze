@@ -105,15 +105,14 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     exactly qʳ/(1 + Δt/τ).
   - A 2-minute `--small_test` on the CPU runs. It had no rain yet, so the correction wasn't
     exercised in a model.
-- **Result of restarting with `--implicit_rain_sink` (iterations 63100–63490, 2026-10-13): rain
-  is still negative.**
-  - The ρqʳ minimum jumps between −0.03 and −2.05 g/kg from one 10-iteration check to the next.
-  - The ρqˢⁿ minimum is −0.002 to −0.04 g/kg.
-  - Either the callback isn't acting in the model, or the negatives come from advection or
-    sedimentation.
-  - **Next:** rerun with `--debug_nan`; the bounds check now prints where each extreme is, with z
-    and T. Summarise the log with `helpers/log_summary.sh <log>` on the cluster.
-    - Still near 4–5 km and T < 273.15 K: suspect the callback.
+- **The fix is untested in a run.** The log of iterations 63100–63490 (rain minimum −0.03 to
+  −2.05 g/kg, snow −0.002 to −0.04 g/kg) came from the old run without the fix. It shows the
+  scatter of the negatives before the fix; it says nothing about whether the fix works.
+  - The run with `--implicit_rain_sink --debug_nan` was submitted 2026-10-13 and is waiting in
+    the queue.
+  - **Next:** summarise its log with `helpers/log_summary.sh <log>`.
+    - Negatives gone, or much smaller: the cold sink was the cause.
+    - Still at 4–5 km with T < 273.15 K: suspect the callback.
     - At rain edges, the bottom cell or cloud top: it's advection.
 - **Log workflow:** don't paste raw logs. Paste the `helpers/log_summary.sh` output: the last
   progress line, NaN/errors, and per field the count, worst value, and where the extremes are by
