@@ -88,6 +88,14 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     smaller flakes (mean radius 0.46 mm). E(rain–snow) = 1 in both.
   - Even Lin's τ is about Δt at high rain, so any explicit, uncapped version of this process is
     marginal at Δt ≈ 4 s.
+  - Literature (Consensus search):
+    - Gaudet & Schmidt (2007, JAMC, doi:10.1175/jam2442.1) show the explicit bulk collection
+      equation can deplete more than 100% of the collected species in one step, under plausible
+      conditions. Schemes have to normalize or bound it.
+    - Ferrier (1994, JAS) reformulates collection to avoid unrealistically large accretion rates.
+    - Heymsfield et al. (2008, JAS) find exponential snow N₀ 5–30× larger than earlier
+      assumptions (Lin's 3×10⁶). So the ClimaParams snow N₀ isn't unreasonable.
+    - The fault is the missing cap, not the parameters.
 
 ## Tools added 2026-10-12
 
