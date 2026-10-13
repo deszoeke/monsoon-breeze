@@ -2,9 +2,9 @@
 #SBATCH --job-name=monsoon
 #SBATCH --partition=ceoas-gpu
 #SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=2         # the run is GPU-bound
+#SBATCH --mem=32G                 # Julia, compilation, checkpoint writing
+#SBATCH --time=02:00:00           # short diagnostic runs; for long ones pass e.g. sbatch --time=48:00:00
 #SBATCH --output=slurm-%j.out
 
 # Breeze monsoon-convection run on one A100 GPU (partition ceoas-gpu).
@@ -21,7 +21,14 @@ set -euo pipefail
 export PATH="$HOME/.juliaup/bin:$PATH"     # juliaup's Julia 1.13, not the system julia
 REPO=$SLURM_SUBMIT_DIR
 RUN=${RUN:-run}
-WALL_TIME=${WALL_TIME:-47h}                # stop and checkpoint 1 h before --time
+# Stop and checkpoint 10 min before the job's time limit (whatever --time it was given), unless
+# WALL_TIME is set. squeue prints the limit as [days-][hours:]minutes:seconds.
+limit=$(squeue -h -j "$SLURM_JOB_ID" -o %l)
+days=0; [[ $limit == *-* ]] && { days=${limit%%-*}; limit=${limit#*-}; }
+IFS=: read -r -a hms <<< "$limit"
+(( ${#hms[@]} == 3 )) || hms=(0 "${hms[@]}")
+limit_min=$(( 10#$days * 1440 + 10#${hms[0]} * 60 + 10#${hms[1]} ))
+WALL_TIME=${WALL_TIME:-$(( limit_min - 10 ))min}
 
 # Slurm gives the job one GPU of its own, but processes started outside Slurm can still be on it.
 # Stop at once if they leave too little memory for the run (estimated 10–20 GB; check nvidia-smi on a running job).
