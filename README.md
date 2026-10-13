@@ -473,21 +473,34 @@ steps (25,000–45,000) to estimate the length of the full run.
 ### 4. Production runs (batch)
 
 Submit [`monsoon_job.sh`](monsoon_job.sh) from the **repository directory** on the **login
-node**. Arguments after the script name go to `monsoon_convection.jl`:
+node**. The script names no hardware: give the partition and GPU on the `sbatch` line. Arguments
+after the script name go to `monsoon_convection.jl`:
 
 ```sh
 cd /ceoas/deszoeks/projects/monsoon-breeze
-sbatch monsoon_job.sh                          # first job
-sbatch monsoon_job.sh --restart                # each continuation, until the stop time
-jid=$(sbatch --parsable monsoon_job.sh)        # or chain a continuation behind it:
-sbatch --dependency=afterok:$jid monsoon_job.sh --restart
-RUN=run/sst302 sbatch monsoon_job.sh           # another experiment in its own run directory
-sbatch monsoon_job.sh --small_test --stop_time=10min   # quick test of the batch path
+A100="-p ceoas-gpu --gres=gpu:a100:1"           # x86_64 + A100 80 GB
+GH200="-p ceoas-arm --gres=gpu:gh200_480gb:1"   # aarch64 Grace Hopper, 480 GB
+sbatch $A100 monsoon_job.sh                    # first job
+sbatch $A100 monsoon_job.sh --restart          # each continuation, until the stop time
+jid=$(sbatch --parsable $A100 monsoon_job.sh)  # or chain a continuation behind it:
+sbatch $A100 --dependency=afterok:$jid monsoon_job.sh --restart
+RUN=run/sst302 sbatch $GH200 monsoon_job.sh    # another experiment in its own run directory
+sbatch $A100 monsoon_job.sh --small_test --stop_time=10min   # quick test of the batch path
 ```
 
+Avoid `ceoas-arm-lowprio`. It requeues a preempted job with its first arguments, which starts
+again from t = 0 without `--restart`.
+
 The script:
-- requests one node of `ceoas-gpu` with A100s, 4 CPUs, 64 GB and 48 h;
-- uses juliaup's Julia (`~/.juliaup/bin` first on `PATH`; the system `julia` is 1.10);
+- requests 2 CPUs, 32 GB and 2 h. For long runs pass `--time`, e.g. `sbatch --time=48:00:00 ...`;
+- sources [`helpers/arch_env.sh`](helpers/arch_env.sh), which sets Julia and Slurm up for the
+  node's architecture (`uname -m`):
+  - juliaup's Julia 1.13, not the system `julia`, which is 1.10;
+  - that architecture's Julia depot, `JULIA_CPU_TARGET` and Slurm commands;
+  - it removes the other architectures' directories from `PATH`.
+
+  Add `source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh` to `~/.bashrc` so
+  login and interactive shells match;
 - runs on the first allocated GPU that's idle (see below);
 - writes output and checkpoints to `RUN` (default `run/`, git-ignored) and the log to
   `slurm-<jobid>.out`. The log's first line gives the node, GPU, Julia version and run

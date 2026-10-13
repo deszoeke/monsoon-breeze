@@ -139,11 +139,21 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 ## Grace Hopper (ARM) setup, 2026-10-13
 
 - GH200 nodes (aarch64 CPU, one 480 GB GPU each) are in partition `ceoas-arm` (rime, youmu).
-  Submit with `monsoon_job_arm.sh`, used the same way as `monsoon_job.sh`. Avoid
-  `ceoas-arm-lowprio`: it requeues preempted jobs with their first arguments.
-- Julia 1.13.1 for aarch64 lives in `~/.juliaup-aarch64`, with its depot in `~/.julia-aarch64`.
-  The project is instantiated and precompiled there (about 5 min on rime, with no errors).
-- `monsoon_job.sh` picks the juliaup and depot by `uname -m`.
+  Avoid `ceoas-arm-lowprio`: it requeues preempted jobs with their first arguments.
+- `monsoon_job.sh` names no hardware, so the partition and GPU go on the sbatch line:
+  - `sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh ...` for an A100;
+  - `sbatch -p ceoas-arm --gres=gpu:gh200_480gb:1 monsoon_job.sh ...` for a GH200.
+- `helpers/arch_env.sh` sets everything for the architecture `uname -m` reports: juliaup,
+  `JULIAUP_DEPOT_PATH`, `JULIA_DEPOT_PATH`, `JULIA_CPU_TARGET` and the Slurm commands. It also
+  removes the other architectures' directories from `PATH`.
+  - x86_64 uses `~/.juliaup` and `~/.julia`, with `/local/cluster/slurm/bin`.
+  - aarch64 uses `~/.juliaup-aarch64` and `~/.julia-aarch64`, with
+    `/local/cluster/aarch64/slurm/bin`.
+  - The job script sources it, and `~/.bashrc` should too.
+  - Tested on both architectures, each with the other's settings leaked in: julia, srun and sbatch
+    resolve correctly, and the precompiled caches stay valid.
+- Julia 1.13.1 for aarch64 is installed, and the project is precompiled in `~/.julia-aarch64`
+  (about 5 min on rime).
 - Not yet tested: CUDA on the GH200 (`using CUDA; CUDA.versioninfo()`) and a model run.
 
 ## Earlier runs (P3, abandoned) on the cluster (`/ceoas/deszoeks/projects/monsoon-breeze/run/`)

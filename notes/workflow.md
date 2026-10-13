@@ -22,14 +22,14 @@ julia --project monsoon_convection.jl --small_test --stop_time=10min --debug_nan
 ## Cluster
 
 ```sh
-git pull && sbatch precompile_job.sh                   # after package changes; wait for it
+git pull && sbatch -p ceoas precompile_job.sh          # after package changes, per architecture (-p ceoas-arm); wait for it
 srun --partition=ceoas-gpu --gres=gpu:1 --pty bash     # interactive GPU (aerosmith GPU 2 is often busy)
 julia --project check_gpu.jl                           # stages 1–3; --smoke_test adds a 10 min run
 
 # restart a run from a checkpoint in a fresh directory
 mkdir -p run/sed_cfl
 cp run/adv_bounded/monsoon_convection_checkpoint_iteration7699.jld2 run/sed_cfl/
-RUN=run/sed_cfl sbatch monsoon_job.sh --restart --debug_nan --sedimentation_cfl --checkpoint_interval=1h
+RUN=run/sed_cfl sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh --restart --debug_nan --sedimentation_cfl --checkpoint_interval=1h
 ```
 
 The job log is `$RUN/slurm-<job>.out`, next to the run's output; the `slurm-<job>.out` in the
