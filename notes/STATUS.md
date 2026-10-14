@@ -21,8 +21,15 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   still compute the rain–snow collection sinks explicitly and uncapped (our issue #1072 is open;
   PR #1066 "positivity-preserving process rate" is open, unmerged). Keep `implicit_rain_sink`.
 - `helpers/pressure_solver_precision.jl`: `dynamics_pressure_solver` is unchanged in 0.12.0.
-- **To do on the cluster:** pull, re-precompile, and copy the new driver into each run directory
-  before restarting (old copies set `theta_sedimentation_fix = true` and will stop with an error).
+- Precompiled on the cluster for x86_64 and aarch64 (each architecture's own depot). Copy the new
+  driver into each run directory before restarting (old copies set `theta_sedimentation_fix = true`
+  and will stop with an error).
+- Restarting from a 0.11.3 checkpoint should work: Breeze's checkpointing is unchanged and saves
+  only named prognostic fields and the clock. Not yet tested; `run/breeze12` will be the test.
+- **aerosmith GPU fault (2026-10-14, reported to admins):** Slurm prints "Failed to get device
+  handle for GPU 3: Unknown Error" at every job start, and CUDA fails with error 999 at
+  `cuDevicePrimaryCtxRetain` on the GPU it assigns (seen on GPU 2). `check_gpu.jl` fails at stage
+  2. Until it is reset, run on `ceoas-arm`. `run/breeze12` is queued there, waiting for resources.
 - To check: README "Changes to Breeze defaults" describes 0.11.3 behaviour (e.g. AIVA leaving out
   fall speeds, line ~218); #959 changed `implicit_advection_velocities`, so re-verify those notes.
 
