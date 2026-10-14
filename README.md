@@ -30,7 +30,7 @@ cd run/small_test && julia --project=../.. monsoon_convection.jl
 | `monsoon_job.sh` | Slurm batch script for GPU runs: `sbatch -p <partition> --gres=<gpu> monsoon_job.sh <run directory>`. |
 | `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
 | `helpers/pressure_solver_precision.jl` | Run-time override that gives the pressure solve its own precision (`pressure_solver_type`); a stopgap until Breeze offers this. |
-| `Project.toml`, `Manifest.toml` | Julia environment with pinned package versions. |
+| `Project.toml` | Julia environment. Package versions are bounded by the compat entries in `MonsoonConvection/Project.toml`; each machine keeps its own untracked `Manifest.toml`. |
 | `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
 | `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
 | `cm1/` | Original CM1 namelist, sounding and log. |
@@ -415,7 +415,7 @@ export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional; put this in ~/
 JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Use the same Julia version as `Manifest.toml` (1.13.x); juliaup makes this easy.
+Use Julia 1.13.x on every machine; juliaup makes this easy. Without a tracked manifest, `Pkg.instantiate` resolves one from the compat bounds.
 
 **CPU type.** Compile caches are keyed by CPU type. Use the single portable target
 

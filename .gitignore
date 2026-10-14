@@ -6,8 +6,10 @@
 # Machine-specific precompile request (setup_precompile.jl --arch=gpu writes it per machine)
 LocalPreferences.toml
 
-# The top-level Manifest.toml is tracked: it pins package versions for laptop and HPC.
-# A manifest inside the local package would be ignored by the environment anyway.
+# Manifests are not tracked: each machine (laptop, HPC) resolves its own from the compat bounds in
+# MonsoonConvection/Project.toml, so a pull never replaces another machine's manifest or forces a
+# recompile. Upgrade packages by changing those bounds, then Pkg.update on each machine.
+Manifest.toml
 MonsoonConvection/Manifest.toml
 
 # Julia coverage / allocation files
