@@ -119,10 +119,11 @@ closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
 
 ### 2. Microphysics built on the target architecture (bug workaround, no physics change)
 
-`microphysics = on_architecture(arch, ...)`. Breeze 0.11.3 embeds the microphysics in
+`microphysics = on_architecture(arch, ...)`. Breeze 0.11.3 and 0.12.0 embed the microphysics in
 the surface-flux boundary conditions before moving it to the GPU, so P3 GPU runs failed with "not
 isbits" (CPU lookup tables inside a GPU kernel). Building the microphysics on the GPU first avoids
-that; on CPU it does nothing. Draft issue report: `breeze_issue_p3_gpu.md`.
+that; on CPU it does nothing. Breeze issue #1051, fixed on main by PR #1076 (2026-10-14) but not
+yet in a release.
 
 The default microphysics is now Breeze's mixed-phase one-moment scheme (non-equilibrium cloud
 liquid and cloud ice, rain, snow; from CloudMicrophysics.jl) rather than P3, which is not

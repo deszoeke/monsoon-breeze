@@ -230,7 +230,9 @@ P3's ice number caused those failures, so P3 is dropped. It's still available wi
 
 ## Other open items
 
-- Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`.
+- Draft not yet filed: `breeze_issue_pressure_precision.md`.
+- P3 on GPU: filed as Breeze #1051; fixed on main by PR #1076 (2026-10-14), not yet in a release
+  (0.12.0 still has the bug). Keep our `on_architecture` workaround until a release includes it.
 - Optional Breeze issue: AIVA leaves out fall speeds on the anelastic path (`breeze_internals.md`).
 - A colleague runs one-moment fully in Float32, including the pressure solve, on different
   levels. If ours stays stable, try `pressure_solver_type = Float32`.

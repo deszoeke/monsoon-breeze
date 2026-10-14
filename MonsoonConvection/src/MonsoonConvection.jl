@@ -308,11 +308,12 @@ function build_model(sounding::Sounding;
     # but not production ready; the default is Breeze's mixed-phase one-moment scheme
     # (CloudMicrophysics.jl): non-equilibrium cloud liquid and cloud ice, rain and snow.
     #
-    # Built directly on `arch`: Breeze (0.11.3 and main as of Oct 2026) embeds the microphysics
+    # Built directly on `arch`: Breeze 0.11.3 and 0.12.0 embed the microphysics
     # in the surface-flux boundary conditions (energy-flux conversion, stability-dependent bulk
     # coefficient) *before* AtmosphereModel moves the microphysics to the GPU, so those boundary
     # conditions kept CPU lookup tables (P3) and GPU kernels failed with "not isbits". Moving the
-    # microphysics first makes both share the device copy; on CPU this is a no-op.
+    # microphysics first makes both share the device copy; on CPU this is a no-op. Breeze issue
+    # #1051, fixed on main by PR #1076 (2026-10-14, after 0.12.0); drop this once a release has it.
     microphysics = on_architecture(arch, microphysics_scheme(microphysics, FT))
 
     # PBL turbulence (CM1 ipbl = 2, no LES subgrid model)

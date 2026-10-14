@@ -7,7 +7,7 @@ Checked against Breeze 0.11.3 and Oceananigans 0.113.5. Recheck after updating e
   (`helpers/pressure_solver_precision.jl`); a package can't redefine it while precompiling.
 - **P3 on GPU.** The boundary conditions capture the microphysics before `on_architecture`, so the
   CPU lookup tables end up in GPU kernels ("not isbits"). Workaround: build P3 with
-  `on_architecture(arch, P3Microphysics())`.
+  `on_architecture(arch, P3Microphysics())`. Breeze #1051; fixed on main by PR #1076 (after 0.12.0).
 - **TKE closure.** Mixing length ℓ = min(z, Cᴺ√e/N); where N² ≤ 0, ℓ = z (km-scale aloft).
   The default diffusivity caps are infinite.
 - **Bounded WENO** (`WENO(order=5, bounds=(lo, hi))`). Zhang–Shu limiter (experimental),
