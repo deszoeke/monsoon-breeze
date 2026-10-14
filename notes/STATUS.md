@@ -1,4 +1,4 @@
-# Status (updated 2026-10-12)
+# Status (updated 2026-10-14)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `one_moment_microphysics.md` (the switch from P3), `breeze_internals.md` (what we learned in
@@ -10,6 +10,22 @@ The CM1 EKAMSAT monsoon-convection case in Breeze.jl: 1024×512×58, Δx = 500 m
 mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, partition
 `ceoas-gpu`).
 
+## Breeze 0.12.0 (2026-10-14)
+
+- Upgraded Breeze 0.11.3 → 0.12.0 and CloudMicrophysics 0.40.1 → 0.43.0 (compat in
+  `MonsoonConvection/Project.toml`). 10-min `small_test` runs pass on the CPU for one-moment and P3.
+- Breeze 0.12 (PR #959) corrects θˡⁱ for sedimentation itself, so `theta_sedimentation_fix` is
+  gone from the driver. `helpers/theta_sedimentation_correction.jl` is a stub that errors, so an
+  old run copy that still sets it fails instead of correcting twice.
+- The collection-sink undershoot is **not** fixed upstream: Breeze 0.12 and CloudMicrophysics 0.43
+  still compute the rain–snow collection sinks explicitly and uncapped (our issue #1072 is open;
+  PR #1066 "positivity-preserving process rate" is open, unmerged). Keep `implicit_rain_sink`.
+- `helpers/pressure_solver_precision.jl`: `dynamics_pressure_solver` is unchanged in 0.12.0.
+- **To do on the cluster:** pull, re-precompile, and copy the new driver into each run directory
+  before restarting (old copies set `theta_sedimentation_fix = true` and will stop with an error).
+- To check: README "Changes to Breeze defaults" describes 0.11.3 behaviour (e.g. AIVA leaving out
+  fall speeds, line ~218); #959 changed `implicit_advection_velocities`, so re-verify those notes.
+
 ## How runs are configured (since 2026-10-13)
 
 - No command-line flags. Each run directory holds its own copy of `monsoon_convection.jl`, and the
@@ -20,17 +36,17 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 - Continue a run by setting `restart = true` in its copy.
 - The wall time comes from `SLURM_JOB_END_TIME`: the run stops 10 min before the job's limit.
 - On by default:
-  - fixes: `theta_sedimentation_fix`, `pressure_solver_type = Float64`, `implicit_rain_sink`;
+  - fixes: `pressure_solver_type = Float64`, `implicit_rain_sink`. The θˡⁱ sedimentation fix is
+    built into Breeze 0.12 (PR #959), so our `theta_sedimentation_fix` setting is retired;
   - stability: `sedimentation_cfl`, `bounded_advection`, not yet tested off with the fixes;
   - `checkpoint_interval = 1hour`.
 - **To do on the cluster:** copy the new driver into `run/one-moment`, set `restart = true` and
   `debug_nan = true`, then submit.
-- The old flag lines below are history; the flags no longer exist.
 
 ## Current focus: the one-moment run (`run/one-moment`)
 
 - Started from t = 0 on 2026-10-12, with
-  `RUN=run/one-moment sbatch monsoon_job.sh --theta_sedimentation_fix --sedimentation_cfl --debug_nan --checkpoint_interval=1h`.
+  our θ sedimentation fix, `sedimentation_cfl` and `debug_nan` on and `checkpoint_interval = 1hour`.
   Mixed precision: Float32 model, Float64 pressure solve (the defaults).
 - **Passed 18.5 h (iteration ~8680) with no NaN**, past every P3 failure (17.5–17.6 h). Checkpoint
   at iteration 8980 exists.
@@ -113,14 +129,14 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     - Heymsfield et al. (2008, JAS) find exponential snow N₀ 5–30× larger than earlier
       assumptions (Lin's 3×10⁶). So the ClimaParams snow N₀ isn't unreasonable.
     - The fault is the missing cap, not the parameters.
-- **Fix: `--implicit_rain_sink` (`helpers/implicit_rain_sink_correction.jl`, 2026-10-12).**
+- **Fix: `implicit_rain_sink` (`helpers/implicit_rain_sink_correction.jl`, 2026-10-12).**
   - A TendencyCallsite callback turns the rain sinks into backward-Euler: the cold-branch Sʳˢⁿ
     and Sᵃᶜᶜʳⁱ become S/(1 + Δt S/qʳ). The difference moves from snow back to rain, so water is
     conserved and θˡⁱ is unchanged.
   - Kernel check at the 63496 cell (Δt = 4 s, 272 K): one explicit step takes 2 / 0.5 / 0.1 g/kg
     of rain to −12.3 / −1.41 / −0.10 g/kg. The corrected step gives 0.25 / 0.10 / 0.033 g/kg,
     exactly qʳ/(1 + Δt/τ).
-  - A 2-minute `--small_test` on the CPU runs. It had no rain yet, so the correction wasn't
+  - A 2-minute `small_test` on the CPU runs. It had no rain yet, so the correction wasn't
     exercised in a model.
 - **First run with the fix (GH200 youmu, restart from 63496, iterations 63500–64170, 2026-10-13).**
   - The log from before the fix (iterations 63100–63490) had rain minima of −0.03 to −2.05 g/kg
@@ -134,7 +150,7 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
     the melt terms α(Sʳˢⁿ + Sᵃᶜᶜˡˢⁿ) remove snow explicitly, with no cap
     (`one_moment_microphysics.jl:1287-1292`). Keeping rain positive leaves more rain at the
     melting level, which feeds this sink.
-- **Fix extended (2026-10-13).** `--implicit_rain_sink` now also makes the warm snow sink
+- **Fix extended (2026-10-13).** `implicit_rain_sink` now also makes the warm snow sink
   backward-Euler. The correction moves Δ = δʳ − δˢⁿ from snow to rain.
   - Kernel check at Δt = 5 s, 274 K, 2 g/kg rain and 1.57 g/kg snow: an explicit step leaves snow
     at −0.147 g/kg, the corrected step at 1.21 g/kg. The cold cases are unchanged, and water is
@@ -171,7 +187,7 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 - `monsoon_job.sh` runs Julia as `srun --unbuffered env CUDA_VISIBLE_DEVICES=$gpu ...`. Output
   reaches the log at once, and the idle GPU is chosen again inside the step. Not yet confirmed on a
   run: check that the log's GPU number matches what Julia uses.
-- With `--debug_nan`, the bounds check warns every 10 iterations (otherwise once per field). The
+- With `debug_nan`, the bounds check warns every 10 iterations (otherwise once per field). The
   comment is now fixed, and each violation prints its location, height and temperature.
 
 ## Grace Hopper (ARM) setup, 2026-10-13
@@ -204,18 +220,17 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 | Run | Setup | Result |
 |---|---|---|
 | (≥ 2 earlier runs) | mixed precision, unbounded advection | NaN ~iteration 8000 (17.5 h) |
-| `adv_bounded` | restart from 7699, bounded advection, `--debug_nan` | NaN at 7934; ice number first |
+| `adv_bounded` | restart from 7699, bounded advection, `debug_nan` | NaN at 7934; ice number first |
 | `conv_64` | all-Float64 | passed 8243 (2026-10-11); later status unknown |
 | `p3_fixes` | restart from 7699 + θ fix + sedimentation CFL | NaN at 8326 (17.64 h), P3 ice number again |
-| `sed_cfl` | restart from 7699 + `--sedimentation_cfl` | outcome unknown, superseded |
+| `sed_cfl` | restart from 7699 + `sedimentation_cfl` | outcome unknown, superseded |
 
 P3's ice number caused those failures, so P3 is dropped. It's still available with
-`--microphysics=p3`.
+`microphysics = :p3`.
 
 ## Other open items
 
-- Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`,
-  `breeze_issue_theta_sedimentation.md` (its workaround URL has a "…" placeholder).
+- Drafts not yet filed: `breeze_issue_p3_gpu.md`, `breeze_issue_pressure_precision.md`.
 - Optional Breeze issue: AIVA leaves out fall speeds on the anelastic path (`breeze_internals.md`).
 - A colleague runs one-moment fully in Float32, including the pressure solve, on different
-  levels. If ours stays stable, try `--pressure_solver=Float32`.
+  levels. If ours stays stable, try `pressure_solver_type = Float32`.

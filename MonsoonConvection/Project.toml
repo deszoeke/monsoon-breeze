@@ -17,8 +17,8 @@ SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
-Breeze = "0.11.3"
-CloudMicrophysics = "0.38, 0.39, 0.40"
+Breeze = "0.12"
+CloudMicrophysics = "0.41, 0.42, 0.43"
 NCDatasets = "0.14"
 Oceananigans = "0.113"
 PrecompileTools = "1.2"

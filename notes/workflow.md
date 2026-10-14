@@ -52,7 +52,7 @@ each belongs to. `sacct -j <job> -o SubmitLine%200` shows past submissions.
 
 Run: `arch small_test restart stop_time (total) checkpoint_interval debug_nan`.
 Model: `float_type microphysics sponge_variables sponge_timescale`.
-Fixes to Breeze, on by default: `theta_sedimentation_fix pressure_solver_type (Float64)
+Fixes to Breeze, on by default: `pressure_solver_type (Float64)
 implicit_rain_sink`. Stability, on by default and not yet tested off: `sedimentation_cfl
 bounded_advection`.
 

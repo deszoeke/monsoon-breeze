@@ -24,7 +24,7 @@ Newest last. Each entry: symptom → test → conclusion.
      (984 points, k = 1–40, starting at 25 m) and in wⁱ/wⁿⁱ (computed from nⁱ).
    - Hypothesis now: **fall Courant number > 1.** The Δt limit ignores fall speeds; rimed ice
      falls 10–20 m/s and the lowest cell is 50 m, at Δt = 8 s. CPU test: rain alone reaches a fall
-     Courant number of 1.3–2.1 at Δt ≈ 8 s. `--sedimentation_cfl` keeps it at 0.7 (Δt ≈ 3.5–4 s).
+     Courant number of 1.3–2.1 at Δt ≈ 8 s. `sedimentation_cfl` keeps it at 0.7 (Δt ≈ 3.5–4 s).
      **Untested on the full run.**
 
 Other open suspects if `sed_cfl` still fails: P3 itself (new, undertested in Breeze); mixed
@@ -38,15 +38,19 @@ loses ℒ × (surface precipitation) of energy, so the latent heating of all the
 out is undone. Our P3 runs have it too. In a CPU check, a 2 g/kg rain layer gives a spurious
 +0.19 K s⁻¹ in the cell below it.
 
-Fix: `--theta_sedimentation_fix` (`helpers/theta_sedimentation_correction.jl`) adds
+Fix: our `theta_sedimentation_fix` setting (`helpers/theta_sedimentation_correction.jl`) added
 −(ℒˡ Sˡ + ℒⁱ Sⁱ)/(cᵖᵐ Π) to Gρθ at every RK stage, with first-order upwind fluxes (Breeze sediments
 with WENO, so it cancels the leak only to that accuracy). Tested: runs on CPU, correct sign and
-size for a rain layer. Not yet on a full run. Issue draft: `breeze_issue_theta_sedimentation.md`.
+size for a rain layer.
+**Retired 2026-10-14:** Breeze 0.12 (PR #959; upstream issue #1069) adds the term itself, using
+the tracer transport's own fluxes, with enthalpy and heat-capacity corrections, for one-moment and
+P3, also in the implicit sedimentation step. The helper is now a stub that errors if an old run copy
+still sets `theta_sedimentation_fix = true`.
 Unknown whether it contributes to the NaN; it changes the convection a lot either way.
 
 ## `p3_fixes`: both fixes, P3 still fails in ice number (2026-10-12)
 
-Restart from 7699 with `--theta_sedimentation_fix --sedimentation_cfl --debug_nan`. It passed
+Restart from 7699 with the θ fix, `sedimentation_cfl` and `debug_nan` on. It passed
 7934 (the `adv_bounded` failure) but hit NaN at iteration 8326, t = 17.64 h, Δt ≈ 3.7 s.
 
 - The sedimentation CFL held: the fall Courant number stayed at 0.7, at z = 0–50 m.
@@ -81,7 +85,7 @@ No NaN, but condensate goes negative at 4–5 km.
 - **Rain:** the cause was snow and cloud ice collecting rain below 0 °C. The sink is explicit and
   uncapped, with τ ≈ 0.6–4 s against Δt ≈ 4–5 s. The CloudMicrophysics rate was checked by hand
   and is correct; it is fast because of the snow N₀.
-  - Fix: `--implicit_rain_sink`.
+  - Fix: `implicit_rain_sink`.
   - First run with it (GH200, iterations 63500–64170): rain minimum −0.0073 g/kg, down from as
     low as −2 g/kg.
 - **Snow:** with rain fixed, snow went negative just above 0 °C (worst −0.34 g/kg). The cause is

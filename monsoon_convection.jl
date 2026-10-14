@@ -94,9 +94,6 @@ sponge_variables        = :w           # upper sponge above 20 km: :w damps w on
 sponge_timescale        = 300seconds   # damping time scale at the top (CM1 rdalpha = 1/300 s)
 
 # Fixes to Breeze. Keep them on.
-theta_sedimentation_fix = true         # θˡⁱ has no sedimentation term in Breeze, so falling
-                                       # condensate leaks energy ℒ × precipitation
-                                       # (helpers/theta_sedimentation_correction.jl)
 pressure_solver_type    = Float64      # Float32 is unstable on the full 512 km domain (README);
                                        # Float64 with a Float32 model is ~2× faster than all-Float64
 implicit_rain_sink      = microphysics == :one_moment  # backward-Euler rain–snow collection
@@ -227,11 +224,6 @@ simulation = build_simulation(model; stop_time, wall_time_limit, small_test, res
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
 restart && restore_latest_checkpoint!(simulation)
-
-if theta_sedimentation_fix
-    include(joinpath(repo, "helpers", "theta_sedimentation_correction.jl"))
-    Base.invokelatest(add_theta_sedimentation_correction!, simulation)
-end
 
 if implicit_rain_sink
     include(joinpath(repo, "helpers", "implicit_rain_sink_correction.jl"))

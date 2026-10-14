@@ -167,7 +167,7 @@ on CPU everything is Float64.
   step against 1.3 s for all-Float64, about 2× faster. A 4-day run (~43,000 steps at Δt ≈ 8 s)
   takes about 8 h instead of 15 h. Through 1 h its diagnostics matched all-Float64 to the printed
   precision. It works by redefining Breeze's solver construction for the session (written
-  against Breeze 0.11.3; it warns on other versions), so it's a stopgap until Breeze has such an
+  against Breeze 0.11.3, checked on 0.12.0; it warns on other versions), so it's a stopgap until Breeze has such an
   option. All-Float64 remains available with `float_type = Float64`.
 
 The `sponge_variables = :all` option (relax u, v, θ in the sponge layer, CM1 `irdamp = 1`) remains available,
@@ -261,7 +261,6 @@ The copy finds `helpers/` and `cm1/` through the project (`--project`), wherever
 | `sponge_variables` | `:w` | Upper sponge above 20 km. `:w` damps only w (CM1 `irdamp = 2`); `:all` also relaxes u, v and θ toward the sounding (`irdamp = 1`). |
 | `sponge_timescale` | `300seconds` (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
 | **Fixes to Breeze (keep on)** | | |
-| `theta_sedimentation_fix` | `true` | Add the θˡⁱ sedimentation term Breeze leaves out, which otherwise leaks energy ℒ × precipitation (`helpers/theta_sedimentation_correction.jl`, `breeze_issue_theta_sedimentation.md`). |
 | `pressure_solver_type` | `Float64` | Precision of the pressure solve. A Float32 solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
 | `implicit_rain_sink` | `true` with one-moment | Backward-Euler rain–snow collection sinks, which otherwise drive rain and snow negative (`helpers/implicit_rain_sink_correction.jl`, `breeze_issue_uncapped_collection_sinks.md`). |
 | **Stability options** (on in every tested run; not yet tested off with the fixes) | | |

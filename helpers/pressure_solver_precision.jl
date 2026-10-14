@@ -10,7 +10,7 @@
 #
 # How: this REDEFINES Breeze's `dynamics_pressure_solver(::AnelasticDynamics, grid)` for this
 # Julia session, building the same solver on a copy of the grid in the requested precision. It
-# relies on Breeze internals (checked against Breeze 0.11.3) and is a stopgap until Breeze offers
+# relies on Breeze internals (checked against Breeze 0.11.3 and 0.12.0) and is a stopgap until Breeze offers
 # such an option itself. It cannot live in the MonsoonConvection package: packages may not
 # redefine another package's methods while precompiling.
 
@@ -20,8 +20,8 @@ using Oceananigans.Solvers: FourierTridiagonalPoissonSolver
 using Oceananigans.Grids: znodes, topology, halo_size
 using Oceananigans.Architectures: architecture
 
-pkgversion(Breeze) == v"0.11.3" ||
-    @warn "helpers/pressure_solver_precision.jl was written against Breeze 0.11.3; found $(pkgversion(Breeze)). Check that dynamics_pressure_solver is unchanged."
+pkgversion(Breeze) in (v"0.11.3", v"0.12.0") ||
+    @warn "helpers/pressure_solver_precision.jl was checked against Breeze 0.11.3 and 0.12.0; found $(pkgversion(Breeze)). Check that dynamics_pressure_solver is unchanged."
 
 const pressure_solver_float_type = Ref{DataType}(Float64)
 
