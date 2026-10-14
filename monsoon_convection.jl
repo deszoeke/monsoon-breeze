@@ -75,9 +75,9 @@ using Oceananigans.Units: second, seconds, minute, minutes, hour, hours, day, da
 # Run
 arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless CUDA works.
 small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
-restart                 = false        # true: continue from the latest checkpoint in this directory,
+restart                 = true         # true: continue from the latest checkpoint in this directory,
                                        # appending to the NetCDF output
-stop_time               = small_test ? 1hour : 345700seconds  # TOTAL simulated time, counted from
+stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, counted from
                                        # the original start also when restarting (CM1 timax)
 checkpoint_interval     = small_test ? 30minutes : 1hour  # model time between restart files. None
                                        # is written on NaN; only the latest is kept
@@ -101,9 +101,9 @@ implicit_rain_sink      = microphysics == :one_moment  # backward-Euler rain–s
                                        # (helpers/implicit_rain_sink_correction.jl; one-moment only)
 
 # Stability options: on in every tested run; not yet tested off with the fixes above
-sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
+sedimentation_cfl       = false        # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
                                        # (Breeze's limit uses u, v, w only)
-bounded_advection       = true         # bounds-preserving WENO for scalars (moisture, hydrometeors,
+bounded_advection       = false        # bounds-preserving WENO for scalars (moisture, hydrometeors,
                                        # numbers ≥ 0); false: plain WENO(5)
 
 #####
