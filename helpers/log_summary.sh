@@ -3,7 +3,7 @@
 #
 #   helpers/log_summary.sh run/one-moment/<log file>
 #
-# Prints: the last progress line; any NaN/error lines; and, from the --debug_nan "bounds" lines,
+# Prints: the last progress line; any NaN/error lines; and, from the debug_nan "bounds" lines,
 # for each field the number of violations, the worst value, and where the extremes sit
 # (by height and by T above/below 273.15 K).
 log=${1:?usage: helpers/log_summary.sh <log file>}
@@ -14,7 +14,7 @@ grep -E '^\[ Info: Iter:' "$log" | tail -1 | cut -c1-200
 echo "== NaN / errors (first 5)"
 grep -nE 'NaN|Inf found|ERROR|stopping at first' "$log" | head -5 | cut -c1-200
 
-echo "== bounds violations (lines from --debug_nan)"
+echo "== bounds violations (lines from debug_nan = true)"
 awk '
 /^bounds / {
     f = $2; n[f]++

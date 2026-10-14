@@ -4,19 +4,22 @@ Full details are in `README.md`; this is the short version.
 
 ## Conventions
 
-- Hardware is requested (`--arch=gpu`), never auto-detected; a failed check halts before
+- Each run directory holds its own copy of `monsoon_convection.jl`; the settings block at the top
+  of the copy (Julia assignments) is the run's whole configuration. No command-line flags.
+- Hardware is requested (`arch = :gpu`), never auto-detected; a failed check halts before
   touching caches.
-- Experiments go in the driver (`monsoon_convection.jl`), not in the `MonsoonConvection` package.
-  Editing the package means re-precompiling.
-- `JULIA_CPU_TARGET="haswell,-rdrnd"` comes from `~/.bashrc` on the cluster; jobs inherit it.
-  Don't hardcode it in scripts.
+- Experiments go in the driver copy, not in the `MonsoonConvection` package. Editing the package
+  means re-precompiling (on each architecture).
+- `helpers/arch_env.sh` sets juliaup, the depot, `JULIA_CPU_TARGET` and the Slurm commands by
+  `uname -m`; the job scripts source it, and `~/.bashrc` should too.
 - Commit and push only when asked.
 
 ## Laptop (CPU)
 
 ```sh
 julia --project setup_precompile.jl                    # after any package change (~2 min)
-julia --project monsoon_convection.jl --small_test --stop_time=10min --debug_nan
+mkdir -p run/small_test && cp monsoon_convection.jl run/small_test/   # set arch = :cpu, small_test = true
+cd run/small_test && julia --project=../.. monsoon_convection.jl
 ```
 I use the release version of julia (1.13.1) from juliaup.
 
@@ -31,26 +34,27 @@ with the corresponding library paths at
 
 ```sh
 git pull && sbatch -p ceoas precompile_job.sh          # after package changes, per architecture (-p ceoas-arm); wait for it
-srun --partition=ceoas-gpu --gres=gpu:1 --pty bash     # interactive GPU (aerosmith GPU 2 is often busy)
+srun -p ceoas-arm --gres=gpu:gh200_480gb:1 --mem=32G --time=1:00:00 --pty bash   # interactive GPU
 julia --project check_gpu.jl                           # stages 1–3; --smoke_test adds a 10 min run
 
-# restart a run from a checkpoint in a fresh directory
-mkdir -p run/sed_cfl
-cp run/adv_bounded/monsoon_convection_checkpoint_iteration7699.jld2 run/sed_cfl/
-RUN=run/sed_cfl sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh --restart --debug_nan --sedimentation_cfl --checkpoint_interval=1h
+# new experiment, or a restart from another run's checkpoint in a fresh directory
+mkdir -p run/exp && cp monsoon_convection.jl run/exp/  # edit the copy's settings
+cp run/one-moment/monsoon_convection_checkpoint_iteration<N>.jld2 run/exp/   # + restart = true
+sbatch -p ceoas-arm --gres=gpu:gh200_480gb:1 monsoon_job.sh run/exp   # partitions: monsoon_job.sh header
 ```
 
-The job log is `$RUN/slurm-<job>.out`, next to the run's output; the `slurm-<job>.out` in the
-repository only names the run directory. Logs from before 2026-10-11 are all in the repository:
-`grep -H "run directory" slurm-*.out` tells which run each belongs to. The log shows the full command line. `sacct -j <job> -o SubmitLine%200` shows past
-submissions.
+The job log is `<run directory>/slurm-<job>.out`, next to the run's output, and starts with the
+copy's settings; the `slurm-<job>.out` in the repository only names the run directory. Logs from
+before 2026-10-11 are all in the repository: `grep -H "run directory" slurm-*.out` tells which run
+each belongs to. `sacct -j <job> -o SubmitLine%200` shows past submissions.
 
-## Flags (driver)
+## Settings (top of each run's monsoon_convection.jl)
 
-`--arch --float --pressure_solver --small_test --restart --stop_time (total) --wall_time
---checkpoint_interval --sponge --sponge_timescale --unbounded_advection --sedimentation_cfl
---theta_sedimentation_fix --microphysics
---debug_nan`
+Run: `arch small_test restart stop_time (total) checkpoint_interval debug_nan`.
+Model: `float_type microphysics sponge_variables sponge_timescale`.
+Fixes to Breeze, on by default: `theta_sedimentation_fix pressure_solver_type (Float64)
+implicit_rain_sink`. Stability, on by default and not yet tested off: `sedimentation_cfl
+bounded_advection`.
 
 ## Julia lessons from this project
 

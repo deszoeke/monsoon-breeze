@@ -10,6 +10,23 @@ The CM1 EKAMSAT monsoon-convection case in Breeze.jl: 1024×512×58, Δx = 500 m
 mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, partition
 `ceoas-gpu`).
 
+## How runs are configured (since 2026-10-13)
+
+- No command-line flags. Each run directory holds its own copy of `monsoon_convection.jl`, and the
+  settings block at its top is the whole configuration. A queued job reads the copy when it
+  starts, so editing the repository's driver never changes a submitted run.
+- Submit: `sbatch -p ceoas-arm --gres=gpu:gh200_480gb:1 monsoon_job.sh run/<exp>`. The header of
+  `monsoon_job.sh` lists the partitions.
+- Continue a run by setting `restart = true` in its copy.
+- The wall time comes from `SLURM_JOB_END_TIME`: the run stops 10 min before the job's limit.
+- On by default:
+  - fixes: `theta_sedimentation_fix`, `pressure_solver_type = Float64`, `implicit_rain_sink`;
+  - stability: `sedimentation_cfl`, `bounded_advection`, not yet tested off with the fixes;
+  - `checkpoint_interval = 1hour`.
+- **To do on the cluster:** copy the new driver into `run/one-moment`, set `restart = true` and
+  `debug_nan = true`, then submit.
+- The old flag lines below are history; the flags no longer exist.
+
 ## Current focus: the one-moment run (`run/one-moment`)
 
 - Started from t = 0 on 2026-10-12, with

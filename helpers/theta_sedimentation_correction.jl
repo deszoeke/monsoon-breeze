@@ -1,5 +1,5 @@
 # Correct the liquid-ice potential temperature for hydrometeor sedimentation. Included by
-# monsoon_convection.jl with --theta_sedimentation_fix; not run directly. From a colleague's
+# monsoon_convection.jl when theta_sedimentation_fix = true; not run directly. From a colleague's
 # one-moment patch, extended to P3.
 #
 # Why: Breeze diagnoses T = Π θˡⁱ + (ℒˡ qˡ + ℒⁱ qⁱ) / cᵖᵐ, but its ρθ tendency has no sedimentation
@@ -69,7 +69,7 @@ function sedimentation_species(μ)
         ice    = ((μ.ρqⁱ, μ.wⁱ),)
         qˡ, qⁱ = (μ.qᶜˡ, μ.qʳ, μ.qʷⁱ), (μ.qⁱ,)
     else
-        error("--theta_sedimentation_fix supports mixed-phase one-moment and P3 microphysics only")
+        error("theta_sedimentation_fix = true supports mixed-phase one-moment and P3 microphysics only")
     end
     return liquid, ice, qˡ, qⁱ
 end

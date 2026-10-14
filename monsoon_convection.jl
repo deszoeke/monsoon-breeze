@@ -13,7 +13,7 @@
 #   psolver = 3 (compressible)                         → AnelasticDynamics
 #   hadvord/vadvord = 5, weno_order = 5                → WENO(order=5)
 #   ptype = 5 (Morrison 2-moment w/ ice)               → mixed-phase one-moment microphysics
-#                                                        (MODIFIED; --microphysics=p3 for P3, the
+#                                                        (MODIFIED; microphysics = :p3 for P3, the
 #                                                        Morrison & Milbrandt successor)
 #   ipbl = 2, sgsmodel = 0, horizturb = 0              → vertical-only TKE closure, diffusivities
 #      (l_inf = 75 m)                                    capped at maximum_diffusivity = 100 m²/s
@@ -36,141 +36,106 @@
 # pressure-dependent microphysics options (nssl2mom_params are unused for ptype = 5).
 #
 # ──────────────────────────────────────────────────────────────────────────────────────
-# Usage
+# Running
 #
-#   julia --project monsoon_convection.jl [flags]
+# Each experiment has its own run directory holding its own copy of this file: edit the settings
+# below in that copy. A queued job reads the copy when it starts, so editing the repository's
+# file never changes a submitted run, and the run directory keeps the code that ran.
 #
-#   --arch=cpu|gpu        hardware to run on (default cpu). A gpu request is checked
-#                         (NVIDIA device, CUDA working) before any package is loaded, and
-#                         the run halts if the GPU is unavailable.
-#   --float=Float32|Float64
-#                         precision of the model (default: Float32 on GPU, Float64 on CPU). The
-#                         pressure solve runs in Float64 regardless (--pressure_solver): in Float32
-#                         it is unstable on the full 512 km domain (see README).
-#                         Single precision is standard for GPU runs of this kind.
-#   --microphysics=one_moment|p3
-#                         one_moment (default): Breeze's mixed-phase one-moment scheme (cloud
-#                         liquid, cloud ice, rain, snow). p3: P3, closest to CM1's ptype = 5 but not
-#                         production ready; it isn't precompiled, so it compiles at startup.
-#   --small_test          32×16 columns (16 km × 8 km), 1 h: a quick check that the code
-#                         runs, not a scientific configuration.
-#   --restart             continue from the latest checkpoint in the current directory.
-#                         Output is appended to the existing NetCDF files.
-#   --stop_time=96h       TOTAL simulated time (units d, h, min, s), counted from the start
-#                         of the original run, also when restarting. Default: CM1 timax =
-#                         345700 s (≈ 96 h), or 1 h with --small_test.
-#   --wall_time=47h       real (wall-clock) time limit for this job. The run stops cleanly
-#                         and writes a checkpoint; continue it with --restart. Set it a
-#                         little below the batch job's time limit. Default: none.
-#   --sponge=w|all        upper sponge (above 20 km): w = damp w only (CM1 irdamp = 2, default);
-#                         all = also relax u, v, θ toward the initial sounding (irdamp = 1)
-#   --sponge_timescale=300s  sponge damping time scale at the top (default 300 s, CM1 rdalpha)
-#   --pressure_solver=Float32|Float64
-#                         precision of the anelastic pressure solve (default Float64). With a
-#                         Float32 model (the GPU default) this is mixed precision, about 2× faster
-#                         than all-Float64 on the A100 and as stable
-#                         (helpers/pressure_solver_precision.jl; a runtime override of Breeze).
-#   --unbounded_advection plain WENO(5) for scalars instead of the default bounds-preserving
-#                         WENO (moisture, hydrometeors, numbers ≥ 0); for comparison runs.
-#   --sedimentation_cfl   also limit the time step by the hydrometeor fall speeds, so that
-#                         |w + w_fall| Δt / Δz ≤ cfl (Breeze's limit uses u, v, w only)
-#   --theta_sedimentation_fix  correct θˡⁱ for falling hydrometeors: Breeze's θ tendency has no
-#                         sedimentation term, so falling condensate changes T by ℒ Δq / cᵖ
-#                         (helpers/theta_sedimentation_correction.jl)
-#   --implicit_rain_sink  make the rain–snow collection sinks of one-moment microphysics backward-
-#                         Euler: rain lost to snow and cloud ice below 0 °C, snow lost to rain above.
-#                         They can't take more than a cell holds (helpers/implicit_rain_sink_correction.jl)
-#   --checkpoint_interval=1h  how often to write restart files (default 1 d; 30 min with
-#                         --small_test). Only the latest is kept, and none is written when a run
-#                         ends in NaN, so use a short interval to be able to restart just before
-#                         a failure.
-#   --debug_nan           every 10 iterations print field extremes, and stop at the first NaN/Inf
-#                         in any prognostic field, reporting the field and grid location.
+#   mkdir -p run/exp && cp monsoon_convection.jl run/exp/     # new experiment; edit its settings
+#   sbatch -p ceoas-arm --gres=gpu:gh200_480gb:1 monsoon_job.sh run/exp   # see monsoon_job.sh
+#   # to continue: set restart = true in run/exp/monsoon_convection.jl and submit again
 #
-# Examples
-#   julia --project monsoon_convection.jl --small_test
-#   julia --project monsoon_convection.jl --small_test --restart --stop_time=1.5h
-#   julia --project monsoon_convection.jl --arch=gpu --wall_time=47h
-#   julia --project monsoon_convection.jl --arch=gpu --restart --wall_time=47h
+#   cd run/exp && julia --project=../.. monsoon_convection.jl   # interactive or local run
 #
-# Run directory: output (NetCDF) and checkpoints (JLD2) are written to the directory you
-# launch from, and --restart looks for checkpoints there. Use one run directory per
-# experiment, on a scratch filesystem on HPC.
-#
-# Output
+# Output (NetCDF) and checkpoints (JLD2) go to the directory Julia runs in.
 #   <prefix>_profiles.nc     hourly horizontal means (time-averaged over each hour)
 #   <prefix>_surface.nc      hourly snapshots at the lowest model level (z = 25 m)
-#   <prefix>_fields.nc       3D snapshots, daily (every 30 min with --small_test)
+#   <prefix>_fields.nc       3D snapshots, daily (every 30 min with small_test)
 #   <prefix>_checkpoint_iteration<N>.jld2   restart file; only the latest is kept
 # Variables: u, v, w (m/s), theta (liquid-ice potential temperature, K), T (K),
 # qv (specific humidity, kg/kg) and the microphysics fields: one-moment mass fractions qcl, qci,
 # qr, qsn and totals ql, qi (kg/kg); P3 mass fractions qcl, qr, qi, qf, qwi (kg/kg), numbers nr, ni
-# (per kg of air) and rime volume bf (m3/kg). Each variable
-# carries units and long_name attributes.
+# (per kg of air) and rime volume bf (m3/kg). Each variable carries units and long_name attributes.
 #
 # Compilation: the model code lives in the precompiled package ./MonsoonConvection
 # (see README.md). One-time setup, and again after package updates or package edits:
-#     julia --project setup_precompile.jl     # same on every machine (on HPC: on a GPU node)
+#     julia --project setup_precompile.jl     # on HPC: sbatch -p <partition> precompile_job.sh
 #     julia --project check_gpu.jl            # on a GPU node: checks the model runs on the GPU
-# GPU runs compile their GPU-specific code at startup (a few minutes).
-# Editing this driver never triggers recompilation:
-#   free to change: the sounding (values and number of levels), initial conditions,
-#                   grid size, keyword values of build_model/build_simulation, flags
-#   recompiles:     editing MonsoonConvection, changing the microphysics or closure type,
-#                   package updates, a new CPU type
+# GPU runs compile their GPU-specific code at startup (a few minutes). None of the settings below,
+# nor the sounding, grid size or initial conditions, recompiles MonsoonConvection.
 # ──────────────────────────────────────────────────────────────────────────────────────
 
-include(joinpath(@__DIR__, "helpers", "preflight.jl"))
+using Oceananigans.Units: second, seconds, minute, minutes, hour, hours, day, days
 
-# Check the flags and the requested hardware before loading any package, so mistakes fail fast.
-flags = try
-    f = parse_flags(ARGS, ("arch", "float", "small_test", "restart", "stop_time", "wall_time", "debug_nan",
-                               "sponge", "sponge_timescale", "pressure_solver", "checkpoint_interval",
-                               "unbounded_advection", "sedimentation_cfl", "theta_sedimentation_fix", "implicit_rain_sink",
-                               "microphysics"))
-    for name in ("small_test", "restart", "debug_nan", "unbounded_advection", "sedimentation_cfl",
-                 "theta_sedimentation_fix", "implicit_rain_sink")
-        get(f, name, "true") == "true" || error("--$name takes no value")
-    end
-    get(f, "arch", "cpu") in ("cpu", "gpu") || error("--arch must be cpu or gpu")
-    get(f, "float", "Float32") in ("Float32", "Float64") || error("--float must be Float32 or Float64")
-    get(f, "pressure_solver", "Float64") in ("Float32", "Float64") || error("--pressure_solver must be Float32 or Float64")
-    haskey(f, "stop_time") && parse_duration(f["stop_time"])
-    haskey(f, "wall_time") && parse_duration(f["wall_time"])
-    get(f, "sponge", "w") in ("w", "all") || error("--sponge must be w or all")
-    get(f, "microphysics", "one_moment") in ("one_moment", "p3") || error("--microphysics must be one_moment or p3")
-    haskey(f, "sponge_timescale") && parse_duration(f["sponge_timescale"])
-    haskey(f, "checkpoint_interval") && parse_duration(f["checkpoint_interval"])
-    get(f, "arch", "cpu") == "gpu" && require_gpu()
-    f
-catch err
-    println(stderr, "ERROR: ", sprint(showerror, err), "\nUsage: see the header of monsoon_convection.jl")
-    exit(1)
-end
+#####
+##### Settings
+#####
 
-on_gpu     = get(flags, "arch", "cpu") == "gpu"
-small_test = haskey(flags, "small_test")
-restart    = haskey(flags, "restart")
-stop_time  = haskey(flags, "stop_time") ? parse_duration(flags["stop_time"]) : small_test ? 3600.0 : 345700.0  # s; CM1 timax
-wall_time_limit = haskey(flags, "wall_time") ? parse_duration(flags["wall_time"]) : Inf
+# Run
+arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless CUDA works.
+small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
+restart                 = false        # true: continue from the latest checkpoint in this directory,
+                                       # appending to the NetCDF output
+stop_time               = small_test ? 1hour : 345700seconds  # TOTAL simulated time, counted from
+                                       # the original start also when restarting (CM1 timax)
+checkpoint_interval     = small_test ? 30minutes : 1hour  # model time between restart files. None
+                                       # is written on NaN; only the latest is kept
+debug_nan               = false        # every 10 iterations print field extremes and each bounds
+                                       # violation's location; stop at the first NaN/Inf
+
+# Model
+float_type              = Float32      # model precision: Float32 (standard on GPUs) | Float64
+microphysics            = :one_moment  # :one_moment, Breeze's mixed-phase scheme (cloud liquid,
+                                       # cloud ice, rain, snow) | :p3, closest to CM1 ptype = 5
+                                       # but not production ready; compiles at startup
+sponge_variables        = :w           # upper sponge above 20 km: :w damps w only (CM1 irdamp = 2)
+                                       # | :all also relaxes u, v, θ to the sounding (irdamp = 1)
+sponge_timescale        = 300seconds   # damping time scale at the top (CM1 rdalpha = 1/300 s)
+
+# Fixes to Breeze. Keep them on.
+theta_sedimentation_fix = true         # θˡⁱ has no sedimentation term in Breeze, so falling
+                                       # condensate leaks energy ℒ × precipitation
+                                       # (helpers/theta_sedimentation_correction.jl)
+pressure_solver_type    = Float64      # Float32 is unstable on the full 512 km domain (README);
+                                       # Float64 with a Float32 model is ~2× faster than all-Float64
+implicit_rain_sink      = microphysics == :one_moment  # backward-Euler rain–snow collection
+                                       # sinks, which otherwise drive rain and snow negative
+                                       # (helpers/implicit_rain_sink_correction.jl; one-moment only)
+
+# Stability options: on in every tested run; not yet tested off with the fixes above
+sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
+                                       # (Breeze's limit uses u, v, w only)
+bounded_advection       = true         # bounds-preserving WENO for scalars (moisture, hydrometeors,
+                                       # numbers ≥ 0); false: plain WENO(5)
+
+#####
+##### Setup
+#####
+
+# The repository (helpers/, cm1/): the project this runs in, wherever this copy of the file is
+repo = dirname(Base.active_project())
+include(joinpath(repo, "helpers", "preflight.jl"))
+arch == :gpu && require_gpu()
+
+# Stop and checkpoint 10 min before a Slurm job's time limit; no limit outside Slurm
+wall_time_limit = haskey(ENV, "SLURM_JOB_END_TIME") ?
+                  parse(Int, ENV["SLURM_JOB_END_TIME"]) - time() - 10minutes : Inf
 
 using Oceananigans
-using Oceananigans.Units
 
-Oceananigans.defaults.FloatType = get(flags, "float", on_gpu ? "Float32" : "Float64") == "Float32" ? Float32 : Float64
+Oceananigans.defaults.FloatType = float_type
 
 using MonsoonConvection
 
 # Pressure-solve precision different from the model's: override Breeze's solver construction
 # for this session (see helpers/pressure_solver_precision.jl).
-let model_FT = string(Oceananigans.defaults.FloatType), solver_FT = get(flags, "pressure_solver", "Float64")
-    if solver_FT != model_FT
-        include(joinpath(@__DIR__, "helpers", "pressure_solver_precision.jl"))
-        Base.invokelatest(() -> (Main.pressure_solver_float_type[] = solver_FT == "Float64" ? Float64 : Float32))
-    end
+if pressure_solver_type != float_type
+    include(joinpath(repo, "helpers", "pressure_solver_precision.jl"))
+    Base.invokelatest(() -> (Main.pressure_solver_float_type[] = pressure_solver_type))
 end
 
-arch = on_gpu ? GPU() : CPU()
+hardware = arch == :gpu ? GPU() : CPU()
 
 #####
 ##### Experiment: sounding and grid
@@ -178,7 +143,7 @@ arch = on_gpu ? GPU() : CPU()
 
 # CM1 input_sounding (isnd = 7). For a new experiment, point to another file, or build
 # a Sounding(p₀, z, θ, r, u, v) from vectors (r is the vapor mixing ratio in kg/kg).
-sounding = read_cm1_sounding(joinpath(@__DIR__, "cm1", "input_sounding"))
+sounding = read_cm1_sounding(joinpath(repo, "cm1", "input_sounding"))
 
 # ---- Analytic sounding from anonymous functions -------------------------------------
 # Write the profiles here as anonymous functions of height z (m) and *evaluate* them on a
@@ -206,9 +171,7 @@ Nx, Ny = small_test ? (32, 16) : (1024, 512)
 #                 sea_surface_temperature = 302, CO₂ = 420e-6, sponge_bottom = 18000)
 # Pass z_faces as a Vector{Float64} (collect a range): a range is a different type and would
 # compile a different grid.
-# Upper sponge (--sponge, --sponge_timescale): default CM1 irdamp = 2, rdalpha = 1/300 s
-sponge_variables = Symbol(get(flags, "sponge", "w"))
-sponge_rate = 1 / parse_duration(get(flags, "sponge_timescale", "300s"))
+sponge_rate = 1 / sponge_timescale
 
 # Vertical grid: CM1's levels (50 m at the surface stretching to 500 m by 5 km, then 500 m) up to
 # z_stretch = 18 km, then Δz increasing linearly to about Δz_top at the 28 km lid. Coarser levels
@@ -228,13 +191,8 @@ end
 
 z_faces = stretched_top_faces(Δz_top = 1000)
 
-# Scalar advection: bounded WENO by default; --unbounded_advection for comparison
-bounded_scalar_advection = !haskey(flags, "unbounded_advection")
-
-# Microphysics (--microphysics): one_moment (default) or p3
-microphysics = Symbol(get(flags, "microphysics", "one_moment"))
-
-model = build_model(sounding; arch, Nx, Ny, z_faces, sponge_variables, sponge_rate, bounded_scalar_advection,
+model = build_model(sounding; arch = hardware, Nx, Ny, z_faces, sponge_variables, sponge_rate,
+                    bounded_scalar_advection = bounded_advection,
                     microphysics)
 
 #####
@@ -262,35 +220,26 @@ restart || set_initial_conditions!(model, sounding; δθ = 0.25, seed = 2023)
 #####
 
 prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
-# Checkpoint interval (--checkpoint_interval; default daily, CM1 rstfrq, or 30 min with --small_test)
-checkpoint_kw = haskey(flags, "checkpoint_interval") ?
-                (; checkpoint_interval = parse_duration(flags["checkpoint_interval"])) : (;)
-
-# --sedimentation_cfl: the time step also keeps the fall-speed Courant number ≤ cfl
-sedimentation_cfl = haskey(flags, "sedimentation_cfl")
-
 simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, sedimentation_cfl,
-                              checkpoint_kw...)
+                              checkpoint_interval)
 
-@info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(arch) in $(Oceananigans.defaults.FloatType), " *
+@info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
 restart && restore_latest_checkpoint!(simulation)
 
-# --theta_sedimentation_fix: add the θˡⁱ sedimentation term Breeze leaves out to the ρθ tendency
-if haskey(flags, "theta_sedimentation_fix")
-    include(joinpath(@__DIR__, "helpers", "theta_sedimentation_correction.jl"))
+if theta_sedimentation_fix
+    include(joinpath(repo, "helpers", "theta_sedimentation_correction.jl"))
     Base.invokelatest(add_theta_sedimentation_correction!, simulation)
 end
 
-# --implicit_rain_sink: backward-Euler rain–snow collection sinks, so rain and snow can't go negative from them
-if haskey(flags, "implicit_rain_sink")
-    include(joinpath(@__DIR__, "helpers", "implicit_rain_sink_correction.jl"))
+if implicit_rain_sink
+    include(joinpath(repo, "helpers", "implicit_rain_sink_correction.jl"))
     Base.invokelatest(add_implicit_rain_sink_correction!, simulation)
 end
 
 #####
-##### --debug_nan: every 10 iterations, print field extremes and stop at the first NaN/Inf in any
+##### debug_nan: every 10 iterations, print field extremes and stop at the first NaN/Inf in any
 ##### prognostic field, reporting where it is (for diagnosing blow-ups)
 #####
 
@@ -298,7 +247,7 @@ using Printf
 using Oceananigans: prognostic_fields
 using Oceananigans.Grids: znodes
 
-if haskey(flags, "debug_nan")
+if debug_nan
     # A NaN reaches every prognostic field within one step (through the pressure solve), so
     # prognostic fields can't show where it started. Diagnostic fields (temperature, microphysics
     # diagnostics and fall speeds, TKE diffusivities, radiative heating) are computed from the
@@ -312,7 +261,7 @@ if haskey(flags, "debug_nan")
                            NamedTuple(n => μ[n] for n in keys(μ) if !startswith(string(n), "ρ") && μ[n] isa Field))
     fall_rate = sedimentation_rate_profile(m)    # per-level max |w + w_fall| / Δz
 
-    function debug_nan(sim)
+    function check_nan(sim)
         if iteration(sim) % 10 == 0
             # value and height of the maximum of a field (copied to the host)
             where_max(f) = (data = Array(interior(f)); (v, I) = findmax(data); (v, Array(znodes(f))[I[3]]))
@@ -365,7 +314,7 @@ if haskey(flags, "debug_nan")
         error("stopping at first NaN/Inf")
     end
 
-    add_callback!(simulation, debug_nan, IterationInterval(1))
+    add_callback!(simulation, check_nan, IterationInterval(1))
 end
 
 
@@ -376,14 +325,14 @@ end
 # The bounds-preserving limiter assumes every cell value already lies within its bounds. If a
 # source (radiation, latent heating, microphysics) pushes a value outside, the limiter misbehaves.
 # Every 10 iterations, compare the specific value (e.g. θ = ρθ/ρᵣ, q = ρq/ρᵣ) of each bounded
-# scalar with its bounds. The first violation of each field gets a full warning; with --debug_nan,
+# scalar with its bounds. The first violation of each field gets a full warning; with debug_nan,
 # every violation then gets one line with the location, height and temperature of the offending
 # extreme. A relative tolerance of 1e-6 ignores round-off-level values such as -1e-18.
 
 using Oceananigans.Advection: BoundsPreservingWENO
 
-if bounded_scalar_advection
-    let m = simulation.model, debug = haskey(flags, "debug_nan")
+if bounded_advection
+    let m = simulation.model, debug = debug_nan
         bounded_names = Tuple(name for (name, scheme) in pairs(m.advection) if scheme isa BoundsPreservingWENO)
         ρᵣ = m.dynamics.reference_state.density
         specific = NamedTuple(name => Field(prognostic_fields(m)[name] / ρᵣ) for name in bounded_names)

@@ -1,5 +1,5 @@
 # Make the rain–snow collection sinks of Breeze's mixed-phase one-moment microphysics implicit.
-# Included by monsoon_convection.jl with --implicit_rain_sink; not run directly.
+# Included by monsoon_convection.jl when implicit_rain_sink = true; not run directly.
 #
 # Why: rain and snow collect each other, and the losing species' sink is explicit and not limited
 # by what the cell holds. With the default parameters the collection timescales are ~0.6–4 s at
@@ -68,7 +68,7 @@ end
 function add_implicit_rain_sink_correction!(simulation)
     model = simulation.model
     haskey(model.microphysical_fields, :ρqˢⁿ) ||
-        error("--implicit_rain_sink supports mixed-phase one-moment microphysics only")
+        error("implicit_rain_sink = true supports mixed-phase one-moment microphysics only")
     μ = model.microphysical_fields
     categories = model.microphysics.categories
     ρ = Breeze.AtmosphereModels.total_density(model.dynamics)

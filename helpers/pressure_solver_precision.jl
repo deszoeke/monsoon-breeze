@@ -1,6 +1,6 @@
 # Run the anelastic pressure solve in its own floating-point precision, independent of the
 # model's (e.g. a Float32 model with a Float64 pressure solve). Included by monsoon_convection.jl
-# when --pressure_solver differs from --float; not run directly.
+# when pressure_solver_type differs from float_type; not run directly.
 #
 # Why: the Fourier–tridiagonal pressure solve is poorly conditioned for the longest horizontal
 # waves under a tall, strongly stratified anelastic column. On the 512 km domain a Float32 solve

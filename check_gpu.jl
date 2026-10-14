@@ -9,7 +9,8 @@
 #   2  a CUDA context opens on the allocated GPU (fails if it is busy or not yours); a trivial kernel
 #   3  the 32×16×65 model builds and takes two time steps in the production precision: Float32 with
 #      a Float64 pressure solve (first step compiles the GPU code)
-#   4  monsoon_convection.jl --small_test runs 10 simulated minutes, with output and checkpoint
+#   4  a copy of monsoon_convection.jl with small_test = true runs 10 simulated minutes, with output
+#      and checkpoint
 
 using Printf
 include(joinpath(@__DIR__, "helpers", "preflight.jl"))
@@ -65,9 +66,16 @@ stage("3. model builds and steps on $(on_cpu ? "CPU" : "GPU")") do
 end
 
 haskey(flags, "smoke_test") && stage("4. smoke test: 10 simulated minutes with output") do
-    driver = joinpath(@__DIR__, "monsoon_convection.jl")
+    # A run-directory copy of the driver with its settings changed, as for a real run
+    source = read(joinpath(@__DIR__, "monsoon_convection.jl"), String)
+    for (name, value) in ("arch" => (on_cpu ? ":cpu" : ":gpu"), "small_test" => "true", "stop_time" => "10minutes")
+        pattern = Regex("^$name +=.*\$", "m")
+        occursin(pattern, source) || error("no `$name = ...` line in monsoon_convection.jl's settings")
+        source = replace(source, pattern => "$name = $value"; count = 1)   # the settings block comes first
+    end
     mktempdir() do dir
-        cmd = `$(Base.julia_cmd()) --project=$(@__DIR__) $driver --arch=$(on_cpu ? "cpu" : "gpu") --small_test --stop_time=10min`
+        write(joinpath(dir, "monsoon_convection.jl"), source)
+        cmd = `$(Base.julia_cmd()) --project=$(@__DIR__) monsoon_convection.jl`
         success(pipeline(Cmd(cmd; dir); stdout, stderr)) || error("monsoon_convection.jl failed (output above)")
         println("output files: ", join(readdir(dir), ", "))
     end
