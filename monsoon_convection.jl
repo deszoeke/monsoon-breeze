@@ -125,6 +125,10 @@ Oceananigans.defaults.FloatType = float_type
 
 using MonsoonConvection
 
+# The manifest is not tracked, so record the package versions in the run's log.
+@info "Julia $(VERSION), Breeze $(pkgversion(MonsoonConvection.Breeze)), Oceananigans $(pkgversion(Oceananigans)), " *
+      "CloudMicrophysics $(pkgversion(MonsoonConvection.CloudMicrophysics))"
+
 # Pressure-solve precision different from the model's: override Breeze's solver construction
 # for this session (see helpers/pressure_solver_precision.jl).
 if pressure_solver_type != float_type
