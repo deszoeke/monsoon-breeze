@@ -16,10 +16,9 @@
 # Vertical grid: build_model's default CM1 levels (65), slightly more than the driver's
 # stretched top (58), so the per-cell figure is a little conservative for the top.
 #
-# Pascal GPUs (GTX 1080 Ti, compute capability 6.1): CUDA 13 dropped them, so if CUDA is not
-# functional pin a 12.x runtime in this machine's LocalPreferences.toml (not committed):
-#     julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.6")'
-# and ignore require_gpu's suggestion to pin the driver's version (13.0).
+# Pascal GPUs (GTX 1080 Ti, compute capability 6.1): CUDA 13 dropped them. The cluster's shared
+# LocalPreferences.toml pins runtime 12.9, which still supports Pascal (and the A100 and GH200),
+# so leave it; ignore require_gpu's suggestion to pin the driver's version (13.0).
 
 using Printf
 

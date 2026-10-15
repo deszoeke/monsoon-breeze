@@ -33,6 +33,5 @@ function Breeze.AtmosphereModels.dynamics_pressure_solver(dynamics::AnelasticDyn
     ρᵣ = Field{Nothing, Nothing, Center}(solver_grid)                    # reference density in FT
     set!(ρᵣ, Array(interior(dynamics.reference_state.density)))
     formulation = AnelasticTridiagonalSolverFormulation(ρᵣ)
-    @info "Pressure solver in $FT (model in $(eltype(grid)))"
     return FourierTridiagonalPoissonSolver(solver_grid; tridiagonal_formulation = formulation)
 end
