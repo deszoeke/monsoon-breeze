@@ -1,12 +1,15 @@
 # EKAMSAT Arabian Sea sounding experiments (17 June 2023), the same soundings as the CM1
-# input_sounding.<name> files in this directory (README.md describes them).
+# cm1/soundings/input_sounding.<name> files (cm1/soundings/README.md describes them).
 #
-#     sounding = ekamsat_sounding("ASdryu4800-8")
+#     control = ekamsat_control()
+#     exp1    = interp_1200_7200(control)
+#     sounding = ekamsat_sounding(shear_set_4800m_u(restore_4800m_level(exp1); u = -8.0))
 #
 # exp0, the control, is the observed sounding idealized onto a few levels. exp1 interpolates it
 # linearly from 1200 m to 7200 m, which weakens the wind shear and largely removes the control's dry
 # layer. The other experiments restore the control's 4800 m level (θ and qv) on exp1, then change
-# the wind at 4800 m or dry the 4800–7200 m layer:
+# the wind at 4800 m or dry the 4800–7200 m layer. Each CM1 file is one of these combinations
+# (cm1/soundings/check_soundings.jl checks that they match):
 #
 #     exp0  control                                     AS20230617
 #     └─ exp1  interp_1200_7200                         AS12007200
@@ -137,48 +140,22 @@ function set_level(sounding, z; values...)
 end
 
 #####
-##### The experiments by name
+##### Sounding
 #####
 
 """
-    ekamsat_levels(name)
+    ekamsat_sounding(table)
 
-The sounding table (rows of z, θ, qv, u, v) of the experiment `name`, the suffix of its
-`input_sounding.<name>` file.
+The sounding `table` (rows of z, θ, qv, u, v) as a `Sounding`, built as `read_cm1_sounding` builds
+one from a CM1 file: the surface values become a level at z = 0 with the wind of the lowest level,
+and the units become Pa and kg/kg.
 """
-function ekamsat_levels(name)
-    exp0 = ekamsat_control()
-    exp1 = interp_1200_7200(exp0)
-    with_4800m = restore_4800m_level(exp1)
-    dry = dry_layer(with_4800m, 0.3, (4800.0, 7200.0))
-
-    name == "AS20230617"     && return exp0
-    name == "AS12007200"     && return exp1
-    name == "ASu4800-8"      && return shear_set_4800m_u(with_4800m; u = -8.0)
-    name == "ASu4800-7p2"    && return shear_set_4800m_u(with_4800m; u = -7.2)
-    name == "ASu4800-p4"     && return shear_set_4800m_u(with_4800m; u = -0.4)
-    name == "ASdry4800-7200" && return dry
-    name == "ASdryu4800-8"   && return shear_set_4800m_u(dry; u = -8.0)
-
-    throw(ArgumentError("unknown EKAMSAT sounding \"$name\"; choose one of AS20230617, " *
-                        "AS12007200, ASu4800-8, ASu4800-7p2, ASu4800-p4, ASdry4800-7200, " *
-                        "ASdryu4800-8"))
-end
-
-"""
-    ekamsat_sounding(name)
-
-The experiment `name` as a `Sounding`, built as `read_cm1_sounding` builds one from the CM1 file:
-the surface values become a level at z = 0 with the wind of the lowest level, and the units become
-Pa and kg/kg.
-"""
-function ekamsat_sounding(name)
+function ekamsat_sounding(table)
     surface = ekamsat_surface()
-    levels = ekamsat_levels(name)
-    z = [0.0;        levels[:, col.z]]
-    θ = [surface.θ;  levels[:, col.θ]]
-    r = [surface.qv; levels[:, col.qv]] ./ 1000
-    u = [levels[1, col.u]; levels[:, col.u]]
-    v = [levels[1, col.v]; levels[:, col.v]]
+    z = [0.0;        table[:, col.z]]
+    θ = [surface.θ;  table[:, col.θ]]
+    r = [surface.qv; table[:, col.qv]] ./ 1000
+    u = [table[1, col.u]; table[:, col.u]]
+    v = [table[1, col.v]; table[:, col.v]]
     return Sounding(100 * surface.p, z, θ, r, u, v)
 end

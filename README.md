@@ -530,9 +530,9 @@ the job's time.
 
 Copy `monsoon_convection.jl` and edit only the driver. Its comments show where each piece goes.
 
-- **Sounding.** For the EKAMSAT experiments, set `sounding_case` in the settings block. The
-  soundings are Julia tables in `cm1/soundings/ekamsat_soundings.jl`, and
-  `cm1/soundings/README.md` describes each one. Otherwise read a CM1-format file, or write
+- **Sounding.** For the EKAMSAT experiments, build the sounding from the control with the
+  functions in `helpers/ekamsat_soundings.jl`; the driver shows how, and
+  `cm1/soundings/README.md` describes each experiment. Otherwise read a CM1-format file, or write
   profiles as anonymous functions of height and *evaluate* them on a vector of heights:
 
   ```julia

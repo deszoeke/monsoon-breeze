@@ -10,9 +10,9 @@ CM1 always reads a file named `input_sounding`. To run an experiment, `input_sou
 copied from one of these files; it is a temporary input, not an experiment of its own.
 
 The Breeze driver doesn't read these files. The same soundings are Julia tables in
-`ekamsat_soundings.jl`, and `sounding_case = "<name>"` in the settings block of
-`monsoon_convection.jl` chooses one; the default is `ASdryu4800-8`. Each table matches its CM1 file
-exactly.
+`helpers/ekamsat_soundings.jl`: the control is a table, and functions build each experiment from it.
+`monsoon_convection.jl` builds `ASdryu4800-8` this way. `check_soundings.jl` checks that every
+experiment matches its CM1 file exactly.
 
 ## File format
 
