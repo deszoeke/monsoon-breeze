@@ -85,6 +85,9 @@ debug_nan               = false        # every 10 iterations print field extreme
                                        # violation's location; stop at the first NaN/Inf
 
 # Model
+sounding_case           = "ASdryu4800-8"  # EKAMSAT experiment (cm1/soundings/README.md): AS20230617
+                                       # (observed) | AS12007200 | ASu4800-8 | ASu4800-7p2 |
+                                       # ASu4800-p4 | ASdry4800-7200 | ASdryu4800-8
 float_type              = Float32      # model precision: Float32 (standard on GPUs) | Float64
 microphysics            = :one_moment  # :one_moment, Breeze's mixed-phase scheme (cloud liquid,
                                        # cloud ice, rain, snow) | :p3, closest to CM1 ptype = 5
@@ -142,9 +145,12 @@ hardware = arch == :gpu ? GPU() : CPU()
 ##### Experiment: sounding and grid
 #####
 
-# CM1 input_sounding (isnd = 7). For a new experiment, point to another file, or build
-# a Sounding(p₀, z, θ, r, u, v) from vectors (r is the vapor mixing ratio in kg/kg).
-sounding = read_cm1_sounding(joinpath(repo, "cm1", "input_sounding"))
+# The EKAMSAT soundings are Julia tables in cm1/soundings/ekamsat_soundings.jl, the same values as
+# CM1's input_sounding files. For another experiment, read a CM1 file with
+# read_cm1_sounding(path), or build a Sounding(p₀, z, θ, r, u, v) from vectors (r is the vapor
+# mixing ratio in kg/kg).
+include(joinpath(repo, "cm1", "soundings", "ekamsat_soundings.jl"))
+sounding = ekamsat_sounding(sounding_case)
 
 # ---- Analytic sounding from anonymous functions -------------------------------------
 # Write the profiles here as anonymous functions of height z (m) and *evaluate* them on a

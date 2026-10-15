@@ -7,9 +7,12 @@ for all of them: 1024 × 512 at 500 m, 10°N, fixed 301 K SST, perpetual sun (se
 `../namelist.input`).
 
 CM1 always reads a file named `input_sounding`. To run an experiment, `input_sounding` was linked or
-copied from one of these files; it is a temporary input, not an experiment of its own. The Breeze
-driver reads `cm1/input_sounding` by default. To run a different experiment, point it at that file:
-`read_cm1_sounding(joinpath(repo, "cm1", "soundings", ...))` in `monsoon_convection.jl`.
+copied from one of these files; it is a temporary input, not an experiment of its own.
+
+The Breeze driver doesn't read these files. The same soundings are Julia tables in
+`ekamsat_soundings.jl`, and `sounding_case = "<name>"` in the settings block of
+`monsoon_convection.jl` chooses one; the default is `ASdryu4800-8`. Each table matches its CM1 file
+exactly.
 
 ## File format
 
