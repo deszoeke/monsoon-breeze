@@ -15,15 +15,14 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 - Upgraded Breeze 0.11.3 → 0.12.0 and CloudMicrophysics 0.40.1 → 0.43.0 (compat in
   `MonsoonConvection/Project.toml`). 10-min `small_test` runs pass on the CPU for one-moment and P3.
 - Breeze 0.12 (PR #959) corrects θˡⁱ for sedimentation itself, so `theta_sedimentation_fix` is
-  gone from the driver. `helpers/theta_sedimentation_correction.jl` is a stub that errors, so an
-  old run copy that still sets it fails instead of correcting twice.
+  gone from the driver. `helpers/theta_sedimentation_correction.jl` is now a no-op that warns, so an
+  old run copy that still sets it runs without correcting twice (2026-10-15; it used to error).
 - The collection-sink undershoot is **not** fixed upstream: Breeze 0.12 and CloudMicrophysics 0.43
   still compute the rain–snow collection sinks explicitly and uncapped (our issue #1072 is open;
   PR #1066 "positivity-preserving process rate" is open, unmerged). Keep `implicit_rain_sink`.
 - `helpers/pressure_solver_precision.jl`: `dynamics_pressure_solver` is unchanged in 0.12.0.
-- Precompiled on the cluster for x86_64 and aarch64 (each architecture's own depot). Copy the new
-  driver into each run directory before restarting (old copies set `theta_sedimentation_fix = true`
-  and will stop with an error).
+- Precompiled on the cluster for x86_64 and aarch64 (each architecture's own depot). Old driver
+  copies in run directories still run (the θ setting is ignored with a warning).
 - Restarting from a 0.11.3 checkpoint should work: Breeze's checkpointing is unchanged and saves
   only named prognostic fields and the clock. Not yet tested; `run/breeze12` will be the test.
 - **aerosmith GPU fault (2026-10-14, reported to admins):** Slurm prints "Failed to get device
