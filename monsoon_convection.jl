@@ -129,9 +129,11 @@ using MonsoonConvection
 @info "Julia $(VERSION), Breeze $(pkgversion(MonsoonConvection.Breeze)), Oceananigans $(pkgversion(Oceananigans)), " *
       "CloudMicrophysics $(pkgversion(MonsoonConvection.CloudMicrophysics))"
 
-# Pressure-solve precision different from the model's: override Breeze's solver construction
-# for this session (see helpers/pressure_solver_precision.jl).
-if pressure_solver_type != float_type
+# Pressure-solve precision different from the model's. A Breeze with
+# AnelasticDynamics(...; pressure_solver_float_type) (our PR) does it itself; for the registered
+# Breeze 0.12, override its solver construction for this session (helpers/pressure_solver_precision.jl).
+breeze_solver_precision = hasfield(MonsoonConvection.Breeze.AnelasticDynamics, :pressure_solver_float_type)
+if !breeze_solver_precision && pressure_solver_type != float_type
     include(joinpath(repo, "helpers", "pressure_solver_precision.jl"))
     Base.invokelatest(() -> (Main.pressure_solver_float_type[] = pressure_solver_type))
 end
@@ -208,7 +210,8 @@ z_faces = stretched_top_faces(Δz_top = 1000)
 
 model = build_model(sounding; arch = hardware, Nx, Ny, z_faces, sponge_variables, sponge_rate,
                     bounded_scalar_advection = bounded_advection,
-                    microphysics)
+                    microphysics,
+                    pressure_solver_float_type = breeze_solver_precision ? pressure_solver_type : nothing)
 
 #####
 ##### Initial conditions (CM1 irandp = 1: ±0.25 K random θ perturbations)

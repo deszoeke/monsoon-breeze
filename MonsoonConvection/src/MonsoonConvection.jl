@@ -217,7 +217,10 @@ function build_model(sounding::Sounding;
                      radiation_interval = 300,          # CM1 dtrad
                      maximum_diffusivity = 100,         # m² s⁻¹, cap on the TKE closure's K (see below)
                      bounded_scalar_advection = true,   # bounds-preserving WENO for all scalars (see below)
-                     microphysics = :one_moment)        # :one_moment or :p3 (see below)
+                     microphysics = :one_moment,        # :one_moment or :p3 (see below)
+                     pressure_solver_float_type = nothing) # precision of the pressure solve, for a Breeze
+                                                        # with AnelasticDynamics(...; pressure_solver_float_type);
+                                                        # nothing: Breeze's default
 
     FT = Oceananigans.defaults.FloatType
     s = sounding
@@ -243,7 +246,8 @@ function build_model(sounding::Sounding;
                                      potential_temperature = z -> θ̄(s, z),
                                      vapor_mass_fraction = z -> q̄ᵗ(s, z))
 
-    dynamics = AnelasticDynamics(reference_state)
+    dynamics = isnothing(pressure_solver_float_type) ? AnelasticDynamics(reference_state) :
+               AnelasticDynamics(reference_state; pressure_solver_float_type)
 
     # Coriolis and geostrophic forcing (CM1 icor = 1, lspgrad = 1)
     coriolis = FPlane(f = coriolis_parameter)

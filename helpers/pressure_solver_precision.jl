@@ -20,18 +20,23 @@ using Oceananigans.Solvers: FourierTridiagonalPoissonSolver
 using Oceananigans.Grids: znodes, topology, halo_size
 using Oceananigans.Architectures: architecture
 
-pkgversion(Breeze) in (v"0.11.3", v"0.12.0") ||
-    @warn "helpers/pressure_solver_precision.jl was checked against Breeze 0.11.3 and 0.12.0; found $(pkgversion(Breeze)). Check that dynamics_pressure_solver is unchanged."
-
 const pressure_solver_float_type = Ref{DataType}(Float64)
 
-function Breeze.AtmosphereModels.dynamics_pressure_solver(dynamics::AnelasticDynamics, grid)
-    FT = pressure_solver_float_type[]
-    solver_grid = RectilinearGrid(architecture(grid), FT;
-                                  size = size(grid), halo = halo_size(grid), topology = topology(grid),
-                                  x = (0, grid.Lx), y = (0, grid.Ly), z = Array(znodes(grid, Face())))
-    ρᵣ = Field{Nothing, Nothing, Center}(solver_grid)                    # reference density in FT
-    set!(ρᵣ, Array(interior(dynamics.reference_state.density)))
-    formulation = AnelasticTridiagonalSolverFormulation(ρᵣ)
-    return FourierTridiagonalPoissonSolver(solver_grid; tridiagonal_formulation = formulation)
+# A Breeze with AnelasticDynamics(...; pressure_solver_float_type) (our PR; default Float64) does
+# this itself, so leave its method alone.
+if !hasfield(AnelasticDynamics, :pressure_solver_float_type)
+
+    pkgversion(Breeze) in (v"0.11.3", v"0.12.0") ||
+        @warn "helpers/pressure_solver_precision.jl was checked against Breeze 0.11.3 and 0.12.0; found $(pkgversion(Breeze)). Check that dynamics_pressure_solver is unchanged."
+
+    function Breeze.AtmosphereModels.dynamics_pressure_solver(dynamics::AnelasticDynamics, grid)
+        FT = pressure_solver_float_type[]
+        solver_grid = RectilinearGrid(architecture(grid), FT;
+                                      size = size(grid), halo = halo_size(grid), topology = topology(grid),
+                                      x = (0, grid.Lx), y = (0, grid.Ly), z = Array(znodes(grid, Face())))
+        ρᵣ = Field{Nothing, Nothing, Center}(solver_grid)                    # reference density in FT
+        set!(ρᵣ, Array(interior(dynamics.reference_state.density)))
+        formulation = AnelasticTridiagonalSolverFormulation(ρᵣ)
+        return FourierTridiagonalPoissonSolver(solver_grid; tridiagonal_formulation = formulation)
+    end
 end
