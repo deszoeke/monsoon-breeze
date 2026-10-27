@@ -1,10 +1,13 @@
 [deps]
 Breeze = "660aa2fb-d4c8-4359-a52c-9c057bc511da"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+IdealizedSounding = "d7b8f595-9609-4bd7-9664-4f09a433f735"
 MonsoonConvection = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
 Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
 
 [sources]
+Breeze = {path = "../Breeze.jl"}
+IdealizedSounding = {path = "../ASTRAL/soundings/IdealizedSounding"}
 MonsoonConvection = {path = "MonsoonConvection"}
 
 [extras]
