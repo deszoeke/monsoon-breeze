@@ -65,5 +65,6 @@ sed -n '/^##### Settings/,/^##### Setup/p' monsoon_convection.jl | grep -E '^[a-
 
 # srun --unbuffered writes output to the log as it comes, so the debug_nan diagnostics just before
 # a crash are not lost in a buffer. Slurm sets CUDA_VISIBLE_DEVICES again for the job step, so
-# env sets the allocated GPU once more inside the step.
-srun --unbuffered env CUDA_VISIBLE_DEVICES="$gpu" julia --project="$REPO" monsoon_convection.jl
+# env sets the allocated GPU once more inside the step. --cpu-bind=none: on aerosmith the step's
+# default CPU binding falls outside the allocation ("Unable to satisfy cpu bind request").
+srun --unbuffered --cpu-bind=none env CUDA_VISIBLE_DEVICES="$gpu" julia --project="$REPO" monsoon_convection.jl
