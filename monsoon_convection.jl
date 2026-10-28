@@ -77,10 +77,10 @@ arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless 
 small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
 restart                 = true         # true: continue from restart_checkpoint, appending to the NetCDF
                                        # output in this directory (new files if there are none)
-restart_checkpoint      = :latest      # :latest, the newest checkpoint in this directory; or a file, to
-                                       # branch from another run, e.g. the control spin-up:
-                                       # "../ekamsat-ctl/monsoon_convection_checkpoint_iteration<N>.jld2".
-                                       # Set it back to :latest before continuing the branched run.
+restart_checkpoint      = :latest      # :latest, the newest checkpoint in this directory; or another run's
+                                       # directory, to branch from its newest checkpoint, e.g. the control
+                                       # spin-up "../ekamsat-ctl". Set it back to :latest before
+                                       # continuing the branched run.
 stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, counted from
                                        # the original start also when restarting (CM1 timax)
 checkpoint_interval     = small_test ? 30minutes : 1hour  # model time between restart files. None
@@ -292,7 +292,17 @@ simulation = build_simulation(model; stop_time, wall_time_limit, small_test, res
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
-restart && restore_latest_checkpoint!(simulation, restart_checkpoint)
+# The checkpoint to restart from: :latest in this directory, or the newest (highest iteration)
+# checkpoint in another run's directory
+checkpoint_file(latest::Symbol) = latest
+function checkpoint_file(dir::String)
+    files = filter(f -> occursin(r"_checkpoint_iteration\d+\.jld2$", f), readdir(dir))
+    isempty(files) && error("no checkpoint (*_checkpoint_iteration<N>.jld2) in $dir")
+    checkpoint_iteration(f) = parse(Int, match(r"_iteration(\d+)\.jld2$", f)[1])
+    return joinpath(dir, files[argmax(checkpoint_iteration.(files))])
+end
+
+restart && restore_latest_checkpoint!(simulation, checkpoint_file(restart_checkpoint))
 
 if implicit_rain_sink
     include(joinpath(repo, "helpers", "implicit_rain_sink_correction.jl"))
