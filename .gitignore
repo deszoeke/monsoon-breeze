@@ -1,5 +1,10 @@
-# Local run directory for model output and checkpoints (monsoon_job.sh default)
-/run/
+# Run directories: track each run's driver copy (its settings), ignore everything else (output,
+# checkpoints, logs). Git can't re-include files inside an ignored directory, so ignore the
+# contents (/run/*/*), not the directories.
+/run/*
+!/run/*/
+/run/*/*
+!/run/*/monsoon_convection.jl
 *.nc
 *.jld2
 
