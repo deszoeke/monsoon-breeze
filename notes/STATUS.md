@@ -11,14 +11,13 @@ The CM1 EKAMSAT monsoon-convection case in Breeze.jl: 1024×512×58, Δx = 500 m
 mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, partition
 `ceoas-gpu`).
 
-## Control run `run/ekamsat-ctl` (2026-10-28)
+## Control run `run/ekamsat-ctl0` (2026-10-28)
 
 - GH200, Breeze 0.12.1 (our PR branch, includes upstream #1066). Failed twice with NaN at ~12 h
   (iteration ~4767), with and without `sedimentation_cfl`/`bounded_advection`: snow went to
   −2.3 g/kg at 5.25 km, then the whole column went NaN.
 - Cause: `implicit_rain_sink` stacked on #1066's own limiter (`nan_investigation.md`). Restarted
-  from the 11 h checkpoint with it off: past the failure, **now at 16 h** (2026-10-28). To do:
-  continue to 2 days (`restart_checkpoint = :latest`), then branch the experiments.
+  from the 11 h checkpoint with it off: past the failure, near 1 day (2026-10-28).
 - `implicit_rain_sink` is retired: Breeze PR #1066 closed the issue (#1072) in 0.12.1, and the
   helper now warns and does nothing there.
 
@@ -34,18 +33,38 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   commented-out examples removed (README "Writing a new experiment" has them).
 - Old run copies of the driver keep working; new runs need a fresh copy to get the new settings.
 
+## Run plan (2026-10-28)
+
+The run drivers are tracked in git (`run/*/monsoon_convection.jl`; the rest of `run/` is
+ignored), all in the new driver format with `implicit_rain_sink = false`, `debug_nan = false`,
+`sst_offset = 1.0`, `stop_time = 7days` unless noted.
+
+1. **`ekamsat-ctl0`**, control spin-up, `stop_time = 2days`, `restart_checkpoint = :latest`.
+   Its running job still reads the old driver (7 days): cancel it after an hourly checkpoint,
+   `git pull` on the cluster (the new driver needs `helpers/run_diagnostics.jl`), resubmit; it
+   resumes from its latest checkpoint and stops exactly at 2 days. Don't restart ctl0 after that.
+2. **When ctl0 has stopped at 2 days**, submit the branches. Each has
+   `restart_checkpoint = "../ekamsat-ctl0"`, which takes ctl0's *newest* checkpoint at the
+   moment the job starts (ctl0 keeps only one), so they start from 2 days only if ctl0 has
+   finished:
+   - `ekamsat-ctl2`: control continuation, no source;
+   - `ekamsat-moisten1000-850`, `-moisten850-650`, `-moisten650-440`: 1e-3 kg/kg/day vapor in
+     (1000, 850), (850, 650), (650, 440) hPa.
+3. **After each branch's first start**, set its `restart_checkpoint = :latest` before any
+   resubmission; otherwise it restarts from ctl0's 2-day state again.
+
 ## Vapor-source experiments (planned 2026-10-27)
 
 - Control sounding: `IdealizedSounding` (1010–10 hPa, 5 hPa levels put on heights hydrostatically
   in the driver; surface 1010 hPa). Initial wind = sounding wind. Geostrophic wind = sounding wind
   above 900 hPa (~1021 m), held at its 900 hPa value below. SST = lowest air T + `sst_offset`
   (1 K; may be too warm, as in CM1).
-- Spin-up: the control runs 2 days with no source (`stop_time = 2days`). Its 2-day checkpoint is
-  copied into each experiment's run directory, which restarts (`restart = true`) with
+- Spin-up: the control runs 2 days with no source (`stop_time = 2days`). Each experiment branches
+  from its 2-day checkpoint (`restart_checkpoint = "../ekamsat-ctl0"`, see "Run plan") with
   `vapor_source_rate` (kg/kg/day; vapor only, no heating; constant, horizontally uniform) in one
   `vapor_source_layer`: (1000, 850), (850, 650) or (650, 440) hPa. A new directory starts fresh
   NetCDF files at the restart time.
-- Source rates not chosen yet. CPU small tests passed (1 h, no NaN): the control sounding, the
+- Source rate 1e-3 kg/kg/day for the first set. CPU small tests passed (1 h, no NaN): the control sounding, the
   source (1e-3 kg/kg/day, 1010–850 hPa) with the SST offset (SST 303.8 K), and branching from
   another directory's checkpoint (`restart_checkpoint`).
 
