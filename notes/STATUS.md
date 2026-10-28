@@ -1,4 +1,4 @@
-# Status (updated 2026-10-14)
+# Status (updated 2026-10-27)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `one_moment_microphysics.md` (the switch from P3), `breeze_internals.md` (what we learned in
@@ -9,6 +9,20 @@ the Breeze/Oceananigans source), `workflow.md` (commands and conventions).
 The CM1 EKAMSAT monsoon-convection case in Breeze.jl: 1024×512×58, Δx = 500 m, 28 km lid,
 mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, partition
 `ceoas-gpu`).
+
+## Vapor-source experiments (planned 2026-10-27)
+
+- Control sounding: `IdealizedSounding` (1010–10 hPa, 5 hPa levels put on heights hydrostatically
+  in the driver; surface 1010 hPa). Initial wind = sounding wind. Geostrophic wind = sounding wind
+  above 900 hPa (~1021 m), held at its 900 hPa value below. SST = lowest air T + `sst_offset`
+  (1 K; may be too warm, as in CM1).
+- Spin-up: the control runs 2 days with no source (`stop_time = 2days`). Its 2-day checkpoint is
+  copied into each experiment's run directory, which restarts (`restart = true`) with
+  `vapor_source_rate` (kg/kg/day; vapor only, no heating; constant, horizontally uniform) in one
+  `vapor_source_layer`: (1000, 850), (850, 650) or (650, 440) hPa. A new directory starts fresh
+  NetCDF files at the restart time.
+- Source rates not chosen yet. CPU small test of the control sounding passed (1 h, no NaN); the
+  vapor source and SST offset are not yet tested.
 
 ## Breeze 0.12.0 (2026-10-14)
 

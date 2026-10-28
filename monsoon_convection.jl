@@ -94,6 +94,13 @@ sponge_variables        = :w           # upper sponge above 20 km: :w damps w on
 sponge_timescale        = 300seconds   # damping time scale at the top (CM1 rdalpha = 1/300 s)
 geostrophic_bottom_pressure = 900      # hPa: the wind is geostrophic above; below, the geostrophic
                                        # wind (pressure gradient) is held at its 900 hPa value
+sst_offset              = 1            # K: SST = lowest air temperature of the sounding + sst_offset
+
+# Experiment: external vapor source, constant and horizontally uniform, vapor only (no heating).
+# The control spins up for 2 days with no source; each experiment restarts from a copy of its
+# 2-day checkpoint with a source in one layer: (1000, 850), (850, 650) or (650, 440) hPa.
+vapor_source_rate       = 0.0          # kg/kg/day; 0 for the control
+vapor_source_layer      = (850, 650)   # (bottom, top) pressures, hPa
 
 # Fixes to Breeze. Keep them on.
 pressure_solver_type    = Float64      # Float32 is unstable on the full 512 km domain (README);
@@ -188,12 +195,15 @@ function hydrostatic_heights(p, T, r)
     return z
 end
 
-p_levels = sort(unique([1010.0:-5.0:10.0; geostrophic_bottom_pressure]); rev = true)   # hPa
+p_levels = sort(unique([1010.0:-5.0:10.0; geostrophic_bottom_pressure; vapor_source_layer...]); rev = true)   # hPa
 ideal = idealized_sounding(p_levels)
 z_levels = hydrostatic_heights(ideal.p, ideal.T, ideal.r)
 sounding = Sounding(100 * ideal.p[1], z_levels, Float64.(ideal.θ), Float64.(ideal.r),
                     Float64.(ideal.u), Float64.(ideal.v))
-geostrophic_bottom = z_levels[findfirst(==(geostrophic_bottom_pressure), p_levels)]   # m
+level_height(p) = z_levels[findfirst(==(p), p_levels)]   # m, of a pressure level (hPa) in p_levels
+geostrophic_bottom = level_height(geostrophic_bottom_pressure)
+vapor_source_heights = Float64.(level_height.(vapor_source_layer))   # (bottom, top), m
+sea_surface_temperature = ideal.T[1] + sst_offset               # K
 
 # ---- Analytic sounding from anonymous functions -------------------------------------
 # Write the profiles here as anonymous functions of height z (m) and *evaluate* them on a
@@ -243,7 +253,8 @@ z_faces = stretched_top_faces(Δz_top = 1000)
 
 model = build_model(sounding; arch = hardware, Nx, Ny, z_faces, sponge_variables, sponge_rate,
                     bounded_scalar_advection = bounded_advection,
-                    microphysics, geostrophic_bottom,
+                    microphysics, geostrophic_bottom, sea_surface_temperature,
+                    vapor_source_rate = vapor_source_rate / day, vapor_source_layer = vapor_source_heights,
                     pressure_solver_float_type = breeze_solver_precision ? pressure_solver_type : nothing)
 
 #####

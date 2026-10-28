@@ -132,6 +132,10 @@ end
 @inline geostrophic_v_forcing(i, j, k, grid, clock, model_fields, p) =
     @inbounds + p.ρᵣ[i, j, k] * p.f * p.uᵍ[1, 1, k]
 
+# External vapor source, Sᵛ(z) in kg kg⁻¹ s⁻¹: ∂(ρqᵛ)/∂t = … + ρᵣ Sᵛ, with no heating.
+@inline vapor_source_forcing(i, j, k, grid, clock, model_fields, p) =
+    @inbounds p.ρᵣ[i, j, k] * p.Sᵛ[1, 1, k]
+
 """
 CM1 `irdamp` damping profile: sin²(π/2 × (z - bottom) / (top - bottom)) above `bottom`.
 """
@@ -204,11 +208,13 @@ function build_model(sounding::Sounding;
                      Nx, Ny,
                      Δx = 500, Δy = Δx,                 # CM1 dx, dy
                      z_faces = cm1_z_faces(),           # CM1 stretch_z = 1
-                     sea_surface_temperature = 301,     # CM1 tsk0 (oceanmodel = 1: fixed SST)
+                     sea_surface_temperature = 301.0,   # CM1 tsk0 (oceanmodel = 1: fixed SST)
                      gustiness = 1,
                      coriolis_parameter = 2.53252496e-5, # CM1 fcor (10°N)
                      geostrophic_bottom = 0.0,          # m; below it the geostrophic wind (the pressure
                                                         # gradient) is held at its value there
+                     vapor_source_rate = 0.0,           # kg kg⁻¹ s⁻¹, constant and horizontally uniform,
+                     vapor_source_layer = (0.0, 0.0),   # between these heights (m); vapor only, no heating
                      sponge_bottom = 20000,             # CM1 zd
                      sponge_rate = 1/300,               # CM1 rdalpha, s⁻¹
                      sponge_variables = :w,             # :w (CM1 irdamp = 2) or :all (u, v, w, θ; irdamp = 1)
@@ -264,6 +270,12 @@ function build_model(sounding::Sounding;
     ρu_forcing = Forcing(geostrophic_u_forcing; discrete_form=true, parameters=geostrophic_parameters)
     ρv_forcing = Forcing(geostrophic_v_forcing; discrete_form=true, parameters=geostrophic_parameters)
 
+    # External vapor source in vapor_source_layer (zero for the control)
+    Sᵛ = Field{Nothing, Nothing, Center}(grid)
+    z₁, z₂ = vapor_source_layer
+    set!(Sᵛ, reshape(FT[vapor_source_rate * (z₁ ≤ z < z₂) for z in zᶜ], 1, 1, Nz))
+    ρqᵛ_forcing = Forcing(vapor_source_forcing; discrete_form=true, parameters=(; ρᵣ = reference_state.density, Sᵛ))
+
     # Upper sponge above sponge_bottom, rate sponge_rate × sin² ramp:
     #   :w   damps w toward 0 (CM1 irdamp = 2)
     #   :all also relaxes ρu, ρv, ρθ toward the initial sounding (CM1 irdamp = 1). On the full
@@ -286,6 +298,7 @@ function build_model(sounding::Sounding;
     else
         throw(ArgumentError("sponge_variables must be :w or :all, got $sponge_variables"))
     end
+    forcing = merge(forcing, (; ρqᵛ = ρqᵛ_forcing))   # ρqᵛ: the prognostic vapor (one-moment and P3)
 
     # Bulk surface fluxes over fixed SST (CM1 sfcmodel = 1, oceanmodel = 1)
     Tˢ = sea_surface_temperature
