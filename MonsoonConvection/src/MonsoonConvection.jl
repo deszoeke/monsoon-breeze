@@ -620,15 +620,16 @@ function build_simulation(model;
 end
 
 """
-    restore_latest_checkpoint!(simulation)
+    restore_latest_checkpoint!(simulation, checkpoint = :latest)
 
-Restart: restore the latest checkpoint in the simulation's output directory and recompute
-Δt from the CFL condition. (The checkpointer does not save Δt; restarting with the initial
-Δt would ramp up again at 10% per time-step-wizard update.)
+Restart: restore `checkpoint`, by default the latest checkpoint in the simulation's output
+directory, or a checkpoint file path (e.g. another run's spin-up), and recompute Δt from the CFL
+condition. (The checkpointer does not save Δt; restarting with the initial Δt would ramp up again
+at 10% per time-step-wizard update.)
 """
-function restore_latest_checkpoint!(simulation)
+function restore_latest_checkpoint!(simulation, checkpoint = :latest)
     model = simulation.model
-    set!(simulation; checkpoint=:latest)
+    set!(simulation; checkpoint)
     update_state!(model) # restored momentum → velocities, diagnostics
     wizard = simulation.callbacks[:time_step_wizard].func
     simulation.Δt = clamp(wizard.cfl * wizard.cell_advection_timescale(model), wizard.min_Δt, wizard.max_Δt)

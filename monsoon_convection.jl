@@ -75,8 +75,12 @@ using Oceananigans.Units: second, seconds, minute, minutes, hour, hours, day, da
 # Run
 arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless CUDA works.
 small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
-restart                 = true         # true: continue from the latest checkpoint in this directory,
-                                       # appending to the NetCDF output
+restart                 = true         # true: continue from restart_checkpoint, appending to the NetCDF
+                                       # output in this directory (new files if there are none)
+restart_checkpoint      = :latest      # :latest, the newest checkpoint in this directory; or a file, to
+                                       # branch from another run, e.g. the control spin-up:
+                                       # "../ekamsat-ctl/monsoon_convection_checkpoint_iteration<N>.jld2".
+                                       # Set it back to :latest before continuing the branched run.
 stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, counted from
                                        # the original start also when restarting (CM1 timax)
 checkpoint_interval     = small_test ? 30minutes : 1hour  # model time between restart files. None
@@ -288,7 +292,7 @@ simulation = build_simulation(model; stop_time, wall_time_limit, small_test, res
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
 
-restart && restore_latest_checkpoint!(simulation)
+restart && restore_latest_checkpoint!(simulation, restart_checkpoint)
 
 if implicit_rain_sink
     include(joinpath(repo, "helpers", "implicit_rain_sink_correction.jl"))
