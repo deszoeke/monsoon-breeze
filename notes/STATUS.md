@@ -53,6 +53,22 @@ ignored), all in the new driver format with `implicit_rain_sink = false`, `debug
 3. **After each branch's first start**, set its `restart_checkpoint = :latest` before any
    resubmission; otherwise it restarts from ctl0's 2-day state again.
 
+## Plotting (2026-10-28)
+
+- `plotter.jl`: functions that read a run directory and return CairoMakie figures; including it
+  only defines them. Own environment `plots/` (CairoMakie, NCDatasets, JLD2, Revise; no Breeze):
+  `julia --project=plots -e 'using Pkg; Pkg.instantiate()'` once per machine.
+- Mac, interactively: `plots.ipynb` (`Pkg.activate("plots")`, `using Revise; includet("plotter.jl")`).
+  Cluster, no display: `julia --project=plots -e 'include("plotter.jl"); save_plots("run/ekamsat-ctl0")'`
+  writes PNGs to `<run>/plots`.
+- Readers: `read_profiles` (hourly-mean profiles, (z, time)), `read_snapshot` (`_fields.nc` 3D or
+  `_surface.nc` lowest level), `read_checkpoint` + `checkpoint_snapshot` (latest state; ρᵣ(z)
+  estimated as ⟨ρθ⟩/⟨θ⟩ since the checkpoint has no grid or ρᵣ).
+- Plots: `plot_time_height` (T, qᵛ changes, condensate, precipitation, radiative flux divergence),
+  `plot_wind_time_height`, `plot_profiles`, `plot_xz`, `plot_xy`, `animate_surface` (hourly
+  lowest-level movie; 3D output is daily, too sparse to animate).
+- Tested on a CPU small test; not yet on a full run.
+
 ## Vapor-source experiments (planned 2026-10-27)
 
 - Control sounding: `IdealizedSounding` (1010–10 hPa, 5 hPa levels put on heights hydrostatically
