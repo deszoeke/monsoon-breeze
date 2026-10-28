@@ -1,6 +1,11 @@
 # Make the rain–snow collection sinks of Breeze's mixed-phase one-moment microphysics implicit.
 # Included by monsoon_convection.jl when implicit_rain_sink = true; not run directly.
 #
+# Retired: Breeze PR #1066 closed the issue (#1072); from Breeze 0.12.1 it limits these rates
+# itself. This correction is sized from the unlimited rates, so on top of #1066 it drives snow far
+# negative (the idealized control's NaN at 12 h, notes/nan_investigation.md). There it warns and
+# does nothing. Still applied with Breeze 0.12.0.
+#
 # Why: rain and snow collect each other, and the losing species' sink is explicit and not limited
 # by what the cell holds. With the default parameters the collection timescales are ~0.6–4 s at
 # g/kg amounts, shorter than Δt ≈ 4–5 s, so one step can take more than the cell holds:
@@ -66,6 +71,12 @@ end
 end
 
 function add_implicit_rain_sink_correction!(simulation)
+    if pkgversion(Breeze) ≥ v"0.12.1"
+        @warn "implicit_rain_sink is no longer needed and is ignored: Breeze PR #1066 closed the issue " *
+              "(#1072) in Breeze 0.12.1 (this is $(pkgversion(Breeze))), and this correction would drive " *
+              "snow negative on top of it. Set implicit_rain_sink = false."
+        return nothing
+    end
     model = simulation.model
     haskey(model.microphysical_fields, :ρqˢⁿ) ||
         error("implicit_rain_sink = true supports mixed-phase one-moment microphysics only")

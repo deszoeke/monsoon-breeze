@@ -92,3 +92,22 @@ No NaN, but condensate goes negative at 4–5 km.
   the mirror image: rain collecting snow, plus warm-accretion melting, again explicit and uncapped.
   - The fix was extended to this sink. Not yet tested in a run.
 - Details and numbers are in `STATUS.md`.
+
+## Idealized control (`run/ekamsat-ctl`): NaN at 12 h from negative snow (2026-10-28)
+
+Fails reproducibly at iteration ~4767 (t ≈ 12.0 h), with and without `sedimentation_cfl` and
+`bounded_advection`.
+- `debug_nan`: at 4760 snow is −2.3 g/kg (max +2.4) at (658, 36, k = 20), z = 5.25 km,
+  T = 270.9 K. At 4767 every scalar in that one column (k = 1–57) is NaN at once; K and ρe follow
+  in neighbouring columns, then momentum everywhere (through the pressure solve).
+- Breeze 0.12.1 (our PR branch) ran; it includes upstream #1066, which donor-limits the rain–snow
+  collection and melting rates (`one_moment_microphysics.jl:868-876, 1168-1193`).
+- Fall speed ruled out: CloudMicrophysics returns 0 for negative snow. Whole-column NaN still
+  unexplained (sedimentation is explicit unless snow uses AIVA; not checked).
+- Likely cause: `implicit_rain_sink` stacks on #1066. The helper recomputes the *unlimited*
+  rain–snow collection rate and adds a backward-Euler correction for it, assuming the tendency
+  holds the unlimited explicit sink; with #1066's limiter already applied it moves up to the full
+  unlimited amount from snow to rain, driving snow far negative. The helper has no version check.
+- Test: restart from the 11 h checkpoint with `implicit_rain_sink = false`, `debug_nan = true`:
+  **ran to 13.3 h**, past the failure. Cause confirmed as the stacked correction. The helper now
+  warns and does nothing on Breeze ≥ 0.12.1.

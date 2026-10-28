@@ -1,14 +1,38 @@
-# Status (updated 2026-10-27)
+# Status (updated 2026-10-28)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `one_moment_microphysics.md` (the switch from P3), `breeze_internals.md` (what we learned in
-the Breeze/Oceananigans source), `workflow.md` (commands and conventions).
+the Breeze/Oceananigans source), `workflow.md` (commands and conventions), `cm1_migration.md` (the
+CM1 case this began from).
 
 ## Goal
 
 The CM1 EKAMSAT monsoon-convection case in Breeze.jl: 1024×512×58, Δx = 500 m, 28 km lid,
 mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, partition
 `ceoas-gpu`).
+
+## Control run `run/ekamsat-ctl` (2026-10-28)
+
+- GH200, Breeze 0.12.1 (our PR branch, includes upstream #1066). Failed twice with NaN at ~12 h
+  (iteration ~4767), with and without `sedimentation_cfl`/`bounded_advection`: snow went to
+  −2.3 g/kg at 5.25 km, then the whole column went NaN.
+- Cause: `implicit_rain_sink` stacked on #1066's own limiter (`nan_investigation.md`). Restarted
+  from the 11 h checkpoint with it off: past the failure, **now at 16 h** (2026-10-28). To do:
+  continue to 2 days (`restart_checkpoint = :latest`), then branch the experiments.
+- `implicit_rain_sink` is retired: Breeze PR #1066 closed the issue (#1072) in 0.12.1, and the
+  helper now warns and does nothing there.
+
+## Driver cleanup (2026-10-28)
+
+- `monsoon_convection.jl` 467 → 207 lines; the settings start on line 6, one line each, grouped
+  Run / Domain / Sounding and surface / Model / Experiment / Fixes / Stability.
+- New settings, formerly buried in the code: `Nx, Ny`, `Δz_top`, `sponge_bottom` (now passed to
+  `build_model`), `δθ`, `seed`. `restart_checkpoint` takes `:latest` or another run's directory.
+- `debug_nan` and the limiter-bounds check moved to `helpers/run_diagnostics.jl`
+  (`add_nan_check!`, `add_limiter_bounds_check!`); log output unchanged.
+- Usage text went to README; CM1 history from the driver and README went to `cm1_migration.md`;
+  commented-out examples removed (README "Writing a new experiment" has them).
+- Old run copies of the driver keep working; new runs need a fresh copy to get the new settings.
 
 ## Vapor-source experiments (planned 2026-10-27)
 
@@ -21,8 +45,9 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
   `vapor_source_rate` (kg/kg/day; vapor only, no heating; constant, horizontally uniform) in one
   `vapor_source_layer`: (1000, 850), (850, 650) or (650, 440) hPa. A new directory starts fresh
   NetCDF files at the restart time.
-- Source rates not chosen yet. CPU small test of the control sounding passed (1 h, no NaN); the
-  vapor source and SST offset are not yet tested.
+- Source rates not chosen yet. CPU small tests passed (1 h, no NaN): the control sounding, the
+  source (1e-3 kg/kg/day, 1010–850 hPa) with the SST offset (SST 303.8 K), and branching from
+  another directory's checkpoint (`restart_checkpoint`).
 
 ## Breeze 0.12.0 (2026-10-14)
 
@@ -31,9 +56,11 @@ mixed-phase one-moment microphysics, RRTMGP, 4 days on one A100 (`aerosmith`, pa
 - Breeze 0.12 (PR #959) corrects θˡⁱ for sedimentation itself, so `theta_sedimentation_fix` is
   gone from the driver. `helpers/theta_sedimentation_correction.jl` is now a no-op that warns, so an
   old run copy that still sets it runs without correcting twice (2026-10-15; it used to error).
-- The collection-sink undershoot is **not** fixed upstream: Breeze 0.12 and CloudMicrophysics 0.43
-  still compute the rain–snow collection sinks explicitly and uncapped (our issue #1072 is open;
-  PR #1066 "positivity-preserving process rate" is open, unmerged). Keep `implicit_rain_sink`.
+- The collection-sink undershoot is fixed upstream in #1066 (merged 2026-10-22; in Breeze 0.12.1
+  and our PR branch), which donor-limits the rain–snow rates. **With Breeze 0.12.1 set
+  `implicit_rain_sink = false`**: the helper stacks on #1066 and caused the control's NaN at 12 h
+  (off, the run passed 13.3 h; `nan_investigation.md`). On Breeze ≥ 0.12.1 the helper now warns
+  and does nothing. With registered Breeze 0.12.0 it is still needed.
 - `helpers/pressure_solver_precision.jl`: `dynamics_pressure_solver` is unchanged in 0.12.0.
 - Precompiled on the cluster for x86_64 and aarch64 (each architecture's own depot). Old driver
   copies in run directories still run (the θ setting is ignored with a warning).
