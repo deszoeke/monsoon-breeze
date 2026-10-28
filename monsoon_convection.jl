@@ -85,7 +85,7 @@ stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, co
                                        # the original start also when restarting (CM1 timax)
 checkpoint_interval     = small_test ? 30minutes : 1hour  # model time between restart files. None
                                        # is written on NaN; only the latest is kept
-debug_nan               = false        # every 10 iterations print field extremes and each bounds
+debug_nan               = true         # every 10 iterations print field extremes and each bounds
                                        # violation's location; stop at the first NaN/Inf
 
 # Model
@@ -98,7 +98,7 @@ sponge_variables        = :w           # upper sponge above 20 km: :w damps w on
 sponge_timescale        = 300seconds   # damping time scale at the top (CM1 rdalpha = 1/300 s)
 geostrophic_bottom_pressure = 900      # hPa: the wind is geostrophic above; below, the geostrophic
                                        # wind (pressure gradient) is held at its 900 hPa value
-sst_offset              = 1            # K: SST = lowest air temperature of the sounding + sst_offset
+sst_offset              = 1.0          # K: SST = lowest air temperature of the sounding + sst_offset
 
 # Experiment: external vapor source, constant and horizontally uniform, vapor only (no heating).
 # The control spins up for 2 days with no source; each experiment restarts from a copy of its
@@ -109,14 +109,14 @@ vapor_source_layer      = (850, 650)   # (bottom, top) pressures, hPa
 # Fixes to Breeze. Keep them on.
 pressure_solver_type    = Float64      # Float32 is unstable on the full 512 km domain (README);
                                        # Float64 with a Float32 model is ~2× faster than all-Float64
-implicit_rain_sink      = microphysics == :one_moment  # backward-Euler rain–snow collection
+implicit_rain_sink      = false        # backward-Euler rain–snow collection
                                        # sinks, which otherwise drive rain and snow negative
                                        # (helpers/implicit_rain_sink_correction.jl; one-moment only)
 
 # Stability options: on in every tested run; not yet tested off with the fixes above
-sedimentation_cfl       = false        # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
+sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
                                        # (Breeze's limit uses u, v, w only)
-bounded_advection       = false        # bounds-preserving WENO for scalars (moisture, hydrometeors,
+bounded_advection       = true         # bounds-preserving WENO for scalars (moisture, hydrometeors,
                                        # numbers ≥ 0); false: plain WENO(5)
 
 #####
