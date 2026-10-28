@@ -207,6 +207,8 @@ function build_model(sounding::Sounding;
                      sea_surface_temperature = 301,     # CM1 tsk0 (oceanmodel = 1: fixed SST)
                      gustiness = 1,
                      coriolis_parameter = 2.53252496e-5, # CM1 fcor (10°N)
+                     geostrophic_bottom = 0.0,          # m; below it the geostrophic wind (the pressure
+                                                        # gradient) is held at its value there
                      sponge_bottom = 20000,             # CM1 zd
                      sponge_rate = 1/300,               # CM1 rdalpha, s⁻¹
                      sponge_variables = :w,             # :w (CM1 irdamp = 2) or :all (u, v, w, θ; irdamp = 1)
@@ -255,8 +257,8 @@ function build_model(sounding::Sounding;
     zᶜ = Array(znodes(grid, Center()))
     uᵍ = Field{Nothing, Nothing, Center}(grid)
     vᵍ = Field{Nothing, Nothing, Center}(grid)
-    set!(uᵍ, reshape(FT[ū(s, z) for z in zᶜ], 1, 1, Nz))
-    set!(vᵍ, reshape(FT[v̄(s, z) for z in zᶜ], 1, 1, Nz))
+    set!(uᵍ, reshape(FT[ū(s, max(z, geostrophic_bottom)) for z in zᶜ], 1, 1, Nz))
+    set!(vᵍ, reshape(FT[v̄(s, max(z, geostrophic_bottom)) for z in zᶜ], 1, 1, Nz))
 
     geostrophic_parameters = (; ρᵣ = reference_state.density, f = FT(coriolis_parameter), uᵍ, vᵍ)
     ρu_forcing = Forcing(geostrophic_u_forcing; discrete_form=true, parameters=geostrophic_parameters)

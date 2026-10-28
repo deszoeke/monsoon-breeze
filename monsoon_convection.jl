@@ -92,6 +92,8 @@ microphysics            = :one_moment  # :one_moment, Breeze's mixed-phase schem
 sponge_variables        = :w           # upper sponge above 20 km: :w damps w only (CM1 irdamp = 2)
                                        # | :all also relaxes u, v, θ to the sounding (irdamp = 1)
 sponge_timescale        = 300seconds   # damping time scale at the top (CM1 rdalpha = 1/300 s)
+geostrophic_bottom_pressure = 900      # hPa: the wind is geostrophic above; below, the geostrophic
+                                       # wind (pressure gradient) is held at its 900 hPa value
 
 # Fixes to Breeze. Keep them on.
 pressure_solver_type    = Float64      # Float32 is unstable on the full 512 km domain (README);
@@ -156,11 +158,42 @@ hardware = arch == :gpu ? GPU() : CPU()
 #
 # For another sounding, read a CM1 file with read_cm1_sounding(path), or build a
 # Sounding(p₀, z, θ, r, u, v) from vectors (r is the vapor mixing ratio in kg/kg).
-include(joinpath(repo, "helpers", "ekamsat_soundings.jl"))
-control = ekamsat_control()
-exp1    = interp_1200_7200(control)
-dry     = dry_layer(restore_4800m_level(exp1), 0.3, (4800.0, 7200.0))
-sounding = ekamsat_sounding(shear_set_4800m_u(dry; u = -8.0))    # = CM1 ASdryu4800-8
+#
+# include(joinpath(repo, "helpers", "ekamsat_soundings.jl"))
+# control = ekamsat_control()
+# exp1    = interp_1200_7200(control)
+# dry     = dry_layer(restore_4800m_level(exp1), 0.3, (4800.0, 7200.0))
+# sounding = ekamsat_sounding(shear_set_4800m_u(dry; u = -8.0))    # = CM1 ASdryu4800-8
+
+# Control: the idealized EKAMSAT sounding (IdealizedSounding, defined 1010–10 hPa), on 5 hPa
+# levels put on heights hydrostatically. The surface is its lowest level, 1010 hPa. The initial
+# wind is the sounding's, to shorten the inertial adjustment to the geostrophic wind.
+using IdealizedSounding
+
+"""
+    hydrostatic_heights(p, T, r)
+
+Heights (m) of the pressure levels `p` (decreasing; any unit) above the first level, from the
+hypsometric equation with the virtual temperature of `T` (K) and vapor mixing ratio `r` (kg/kg),
+integrated trapezoidally in ln p. Puts a pressure-coordinate sounding on heights for
+`Sounding(p₀, z, θ, r, u, v)`.
+"""
+function hydrostatic_heights(p, T, r)
+    Rᵈ, g, ε = 287.04, 9.81, 0.622                       # J kg⁻¹ K⁻¹, m s⁻², Rᵈ/Rᵛ
+    Tᵛ = @. T * (1 + r / ε) / (1 + r)
+    z = zeros(length(p))
+    for k in 2:length(p)
+        z[k] = z[k-1] + Rᵈ / g * (Tᵛ[k-1] + Tᵛ[k]) / 2 * log(p[k-1] / p[k])
+    end
+    return z
+end
+
+p_levels = sort(unique([1010.0:-5.0:10.0; geostrophic_bottom_pressure]); rev = true)   # hPa
+ideal = idealized_sounding(p_levels)
+z_levels = hydrostatic_heights(ideal.p, ideal.T, ideal.r)
+sounding = Sounding(100 * ideal.p[1], z_levels, Float64.(ideal.θ), Float64.(ideal.r),
+                    Float64.(ideal.u), Float64.(ideal.v))
+geostrophic_bottom = z_levels[findfirst(==(geostrophic_bottom_pressure), p_levels)]   # m
 
 # ---- Analytic sounding from anonymous functions -------------------------------------
 # Write the profiles here as anonymous functions of height z (m) and *evaluate* them on a
@@ -210,7 +243,7 @@ z_faces = stretched_top_faces(Δz_top = 1000)
 
 model = build_model(sounding; arch = hardware, Nx, Ny, z_faces, sponge_variables, sponge_rate,
                     bounded_scalar_advection = bounded_advection,
-                    microphysics,
+                    microphysics, geostrophic_bottom,
                     pressure_solver_float_type = breeze_solver_precision ? pressure_solver_type : nothing)
 
 #####
