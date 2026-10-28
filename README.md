@@ -1,9 +1,8 @@
 # Monsoon convection in Breeze.jl
 
-A Breeze.jl version of the CM1 (r21.1) EKAMSAT Arabian Sea monsoon-convection case in
-`cm1/`: the 17 June 2023 sounding with a dry layer at 4800–7200 m and strong low-level shear,
-adapted from CM1 `cpm_RadConvEquil`. The header of `monsoon_convection.jl` lists how each
-CM1 namelist option maps to Breeze.
+EKAMSAT Arabian Sea monsoon convection in Breeze.jl, from an idealized sounding. The project began
+as a translation of a CM1 (r21.1) case in `cm1/`; `notes/cm1_migration.md` maps the CM1 namelist to
+Breeze and records where the setups differ.
 
 ## Quick start
 
@@ -41,11 +40,11 @@ cd run/small_test && julia --project=../.. monsoon_convection.jl
 |---|---|---|
 | Columns (Nx × Ny) | 1024 × 512 | 32 × 16 |
 | Horizontal extent | 512 km × 256 km, Δx = Δy = 500 m | 16 km × 8 km |
-| Vertical | 58 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, 500 m to 18 km (identical to CM1 `zf` so far), then stretching to ~1 km at the lid (CM1: 500 m to the top) | same |
+| Vertical | 58 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, 500 m to 18 km, then stretching to ~1 km at the lid | same |
 | Grid cells | 30.4 million | 29,696 |
 | Boundaries | periodic in x and y; rigid lid with a sponge above 20 km | same |
 | Rotation | f-plane, f = 2.53 × 10⁻⁵ s⁻¹ (10°N) | same |
-| Simulated time | 345,700 s ≈ 4 days (CM1 `timax`) | 1 h |
+| Simulated time | `stop_time` | 1 h |
 | Time step | adaptive, CFL 0.7, at most 15 s (≈ 8 s in the 1 h tests, before deep convection) | same |
 | Time steps | roughly 25,000–45,000 | ≈ 570 |
 
@@ -104,10 +103,7 @@ closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
   **symptom** of the Float32 instability in item 3: the top cell became unstable and the closure
   responded with ℓ = z. In Float64 the cap never engages (max Kᵘ ≲ 50 m² s⁻¹, in the boundary
   layer). The cap stays as a safeguard against any unstable layer aloft.
-- **Relation to CM1.** CM1's PBL scheme (`ipbl = 2`) limits the mixing length with
-  `l_inf = 75 m` (namelist), which keeps K ≲ 50 m² s⁻¹ for typical TKE. The cap is the closest
-  available substitute, since Breeze's closure has no mixing-length limit. It caps K, not ℓ, so it
-  is not the same as CM1's formulation.
+- **Relation to CM1:** `notes/cm1_migration.md`, "TKE closure".
 - **Effect.** It changes the physics only where K would exceed the cap. Normal maxima here are
   ~30–40 m² s⁻¹, in the boundary layer. Diagnose how often the cap is active by checking
   `maximum(model.closure_fields.Kᵘ)` (also printed with `debug_nan = true`).
@@ -131,13 +127,10 @@ production ready in Breeze. `microphysics = :p3` restores P3. See `notes/one_mom
 
 ### Vertical grid above 18 km (driver)
 
-The driver (`monsoon_convection.jl`, `stretched_top_faces`) keeps CM1's levels up to 18 km. Above
-that, Δz increases linearly from 500 m to about 1 km at the 28 km lid: 58 levels instead of
-CM1's 65. The tropopause region (cold point ~16–17 km) stays at 500 m. The coarser
-stratosphere and sponge improve the conditioning of the pressure solve for the longest
-horizontal waves (∝ Δz², ~4× at the top) and save ~11% of the cells. This is like Breeze's
-TC-world RCE grid (1 km at a 28 km lid). Set `Δz_top` in the driver, or pass
-`z_faces = MonsoonConvection.cm1_z_faces()` to `build_model` for CM1's original 65 levels.
+Above 18 km the driver's grid (`stretched_top_faces`) stretches Δz linearly from 500 m to about 1 km
+at the 28 km lid (58 levels). This improves the conditioning of the pressure solve for the longest
+horizontal waves. Set `Δz_top` in the driver. Why, and how to get CM1's 65 levels:
+`notes/cm1_migration.md`, "Vertical grid".
 
 ### 3. Float64 pressure solve (numerical precision)
 
@@ -171,7 +164,7 @@ on CPU everything is Float64.
   against Breeze 0.11.3, checked on 0.12.0; it warns on other versions), so it's a stopgap until Breeze has such an
   option. All-Float64 remains available with `float_type = Float64`.
 
-The `sponge_variables = :all` option (relax u, v, θ in the sponge layer, CM1 `irdamp = 1`) remains available,
+The `sponge_variables = :all` option (relax u, v, θ in the sponge layer) remains available,
 but is not needed in Float64.
 
 ### 4. Bounded (positivity-preserving) WENO scalar advection
@@ -230,7 +223,7 @@ exceeds 1, and explicit WENO is unstable there.
   Δt so that the fall Courant number ≤ `cfl` (0.7). In the test, Δt fell from ~8 s to ~3.5–4 s
   while rain was present, so heavy precipitation costs roughly 2× more.
   `debug_nan = true` prints the maximum fall Courant number and its height every 10 iterations.
-- **Better long-term fix (upstream).** Sedimentation substepping (as in CM1), or implicit
+- **Better long-term fix (upstream).** Sedimentation substepping, or implicit
   sedimentation, would remove the cost.
 
 ## Running the model
@@ -253,14 +246,14 @@ The copy finds `helpers/` and `cm1/` through the project (`--project`), wherever
 | `arch` | `:gpu` | `:gpu` or `:cpu`. `:gpu` is checked (NVIDIA device, CUDA working) before the model loads, and the run stops at once if it fails. |
 | `small_test` | `false` | 32×16 columns (16 km × 8 km), 1 h. A check that the code runs, not a scientific configuration. |
 | `restart` | `false` | Continue from the latest checkpoint in the run directory (see Restarts). |
-| `stop_time` | `345700seconds` ≈ 96 h (CM1 `timax`); `1hour` with `small_test` | **Total** simulated time, counted from the start of the original run. |
+| `stop_time` | `7days`; `1hour` with `small_test` | **Total** simulated time, counted from the start of the original run. |
 | `checkpoint_interval` | `1hour` (`30minutes` with `small_test`) | Model time between restart files. Only the latest is kept, and none is written when a run ends in NaN. |
 | `debug_nan` | `false` | Every iteration, check prognostic **and** diagnostic fields for NaN/Inf and stop at the first, listing each bad field (fewest bad points first: nearest the origin). Every 10 iterations, print field extremes and the location, height and T of each bounds violation. |
 | **Model** | | |
 | `float_type` | `Float32` | Precision of the model. |
-| `microphysics` | `:one_moment` | Mixed-phase one-moment, or `:p3` (closest to CM1's `ptype = 5`, not production ready; compiles at startup). |
-| `sponge_variables` | `:w` | Upper sponge above 20 km. `:w` damps only w (CM1 `irdamp = 2`); `:all` also relaxes u, v and θ toward the sounding (`irdamp = 1`). |
-| `sponge_timescale` | `300seconds` (CM1 `rdalpha`) | Sponge damping time scale at the model top (sin² ramp from 20 km). |
+| `microphysics` | `:one_moment` | Mixed-phase one-moment, or `:p3` (not production ready; compiles at startup). |
+| `sponge_variables` | `:w` | Upper sponge above 20 km. `:w` damps only w; `:all` also relaxes u, v and θ toward the sounding. |
+| `sponge_timescale` | `300seconds` | Sponge damping time scale at the model top (sin² ramp from 20 km). |
 | **Fixes to Breeze (keep on)** | | |
 | `pressure_solver_type` | `Float64` | Precision of the pressure solve. A Float32 solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
 | `implicit_rain_sink` | `true` with one-moment | Backward-Euler rain–snow collection sinks, which otherwise drive rain and snow negative (`helpers/implicit_rain_sink_correction.jl`, `breeze_issue_uncapped_collection_sinks.md`). |
@@ -528,7 +521,8 @@ the job's time.
 
 ## Writing a new experiment
 
-Copy `monsoon_convection.jl` and edit only the driver. Its comments show where each piece goes.
+Copy `monsoon_convection.jl` and edit only the driver: its settings block, and the sounding section for a
+new sounding.
 
 - **Sounding.** For the EKAMSAT experiments, build the sounding from the control with the
   functions in `helpers/ekamsat_soundings.jl`; the driver shows how, and
@@ -546,7 +540,7 @@ Copy `monsoon_convection.jl` and edit only the driver. Its comments show where e
   `build_model(sounding; arch, Nx, Ny, Δx = 250, sea_surface_temperature = 302, CO₂ = 420e-6)`.
   Pass `z_faces` as a `Vector` (`collect(...)`), not a range.
 
-- **Initial conditions.** Use `set_initial_conditions!(model, sounding)` (CM1 `irandp = 1`), or
+- **Initial conditions.** Use `set_initial_conditions!(model, sounding)`, or
   `set!` with functions of `(x, y, z)`. `set!` expects:
   - `θ`: liquid-ice potential temperature
   - `qᵗ`: total-water **specific humidity**, qᵗ = r / (1 + r)
