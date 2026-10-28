@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=monsoon
-#SBATCH --cpus-per-task=2         # the run is GPU-bound
+#SBATCH --cpus-per-task=1         # the run is GPU-bound
 #SBATCH --mem=32G                 # Julia, compilation, checkpoint writing
-#SBATCH --time=02:00:00           # short diagnostic runs; for long ones pass e.g. sbatch --time=48:00:00
+#SBATCH --time=06:00:00           # short diagnostic runs; for long ones pass e.g. sbatch --time=48:00:00
 #SBATCH --output=slurm-%j.out
 
 # Breeze monsoon-convection run on one GPU. The run directory holds its own copy of
