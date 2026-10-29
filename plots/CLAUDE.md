@@ -61,4 +61,6 @@ here for plot iteration; the repository's main session handles the model, runs a
 
 - Keep replies short: answer or act, one line of context at most; at most one offer.
 - Commit and push only when asked; confirm in plain words, no commit hashes or graph-rebuild notices.
+- For a substantive change (new plot or tool, a finding), ask whether to update
+  `../notes/STATUS.md` (Plotting section) before suggesting a commit. Small changes: don't ask.
 - Settings are Julia keyword values or assignments, never `--flag` syntax.
