@@ -141,6 +141,29 @@ display_units(name, units) = startswith(name, "q") ? (1e3, "g/kg") : (1.0, units
 
 symmetric_range(A) = (m = maximum(abs, filter(isfinite, A)); m > 0 ? (-m, m) : (-1, 1))
 
+function finite_range(A)
+    a = filter(isfinite, A)
+    isempty(a) && return (0, 1)
+    lo, hi = extrema(a)
+    return lo < hi ? (lo, hi) : (lo - 1, hi + 1)
+end
+
+# A function f of a variable: the plot methods with a first argument f, e.g.
+# plot_xz(log10, rundir, "qv"), plot f of the values in display units (g/kg for mass fractions),
+# elementwise. Non-finite results (log10(0) = -Inf) are left blank. f must accept every value:
+# for logs of mass fractions, which can be slightly negative, use f(q) = log10(max(q, 1e-6)).
+apply_finite(f, A) = map(x -> (y = f(x); isfinite(y) ? y : oftype(y, NaN)), A)
+
+# Label of f(variable): identity is the plain variable. Name f (f(q) = ..., not q -> ...) for a
+# readable label.
+labelled(::typeof(identity), name, units) = "$name ($units)"
+labelled(f, name, units) = "$f($name), $name in $units"
+
+# Color scale: velocities symmetric about 0; anything else, and any f of a variable, the data range
+color_scale(::typeof(identity), name, A) =
+    name in ("u", "v", "w") ? (:balance, symmetric_range(A)) : (:viridis, finite_range(A))
+color_scale(f, name, A) = (:viridis, finite_range(A))
+
 # Profile references for anomalies: the first output, or the time mean
 first_profile(A) = A[:, 1:1]
 time_mean(A) = mean(A; dims = 2)
@@ -172,13 +195,18 @@ plot_axes(fig) = filter(c -> c isa Axis, fig.content)
 
 """
     plot_time_height(rundir; zmax = 12000, reference = first_profile, prefix = "monsoon_convection")
+    plot_time_height(f, rundir; ...)
+
+`f` (e.g. log10) applies to the four condensate panels, in g/kg.
 
 Time–height sections of the horizontal means: T and qᵛ anomalies from `reference` (`first_profile`,
 the first hourly mean, or `time_mean`), cloud liquid, cloud ice, rain and snow (each with the 0 °C
 level of the mean T), and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`:
 1 T, 2 qᵛ, 3 qcl, 4 qci, 5 qr, 6 qsn, 7 radiation.
 """
-function plot_time_height(rundir; zmax = 12_000, reference = first_profile, prefix = "monsoon_convection")
+plot_time_height(rundir; kw...) = plot_time_height(identity, rundir; kw...)
+
+function plot_time_height(f::Function, rundir; zmax = 12_000, reference = first_profile, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
     below = p.z .<= zmax
     T′ = p.T .- reference(p.T)
@@ -191,7 +219,9 @@ function plot_time_height(rundir; zmax = 12_000, reference = first_profile, pref
                          colorrange = symmetric_range(q′[below, :]), zmax)]
     # Each condensate species separately, with the 0 °C level of the mean T (dashed)
     for (i, (name, q)) in enumerate((("cloud liquid", p.qcl), ("cloud ice", p.qci), ("rain", p.qr), ("snow", p.qsn)))
-        ax = time_height!(fig, 2 + i, p.t, p.z, 1e3 .* q; title = "$name (g/kg), dashed: 0 °C", colormap = :dense, zmax)
+        A = apply_finite(f, 1e3 .* q)
+        ax = time_height!(fig, 2 + i, p.t, p.z, A; title = "$(labelled(f, name, "g/kg")); dashed: 0 °C",
+                          colormap = :dense, colorrange = finite_range(A[below, :]), zmax)
         contour!(ax, p.t, p.z ./ 1e3, permutedims(p.T); levels = [273.15], color = :black, linestyle = :dash)
         push!(axes, ax)
     end
@@ -225,14 +255,20 @@ end
 
 """
     plot_profiles(rundir; ns = (first, last), zmax = 16000, prefix = "monsoon_convection")
+    plot_profiles(f, rundir; ...)
 
 Horizontal-mean θ, qᵛ, cloud condensate, u and v at the hourly means `ns` (indices, or `first`/`last`).
+`f` (e.g. log10) applies to the qᵛ and condensate panels, in g/kg.
 """
-function plot_profiles(rundir; ns = (first, last), zmax = 16_000, prefix = "monsoon_convection")
+plot_profiles(rundir; kw...) = plot_profiles(identity, rundir; kw...)
+
+function plot_profiles(f::Function, rundir; ns = (first, last), zmax = 16_000, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
     Nt = length(p.t)
     fig = Figure(size = (1500, 600))
-    panels = [("θ (K)", p.theta), ("qᵛ (g/kg)", 1e3 .* p.qv), ("cloud liquid + ice (g/kg)", 1e3 .* (p.qcl .+ p.qci)),
+    panels = [("θ (K)", p.theta),
+              (labelled(f, "qᵛ", "g/kg"), apply_finite(f, 1e3 .* p.qv)),
+              (labelled(f, "cloud liquid + ice", "g/kg"), apply_finite(f, 1e3 .* (p.qcl .+ p.qci))),
               ("u (m/s)", p.u), ("v (m/s)", p.v)]
     below = p.z .<= zmax
     for (j, (label, A)) in enumerate(panels)
@@ -251,67 +287,83 @@ end
 """
     plot_xz(s; j = 1, zmax = 16000)
     plot_xz(rundir, name; j = 1, n = last, zmax = 16000, kind = "fields", prefix = "monsoon_convection")
+    plot_xz(f, s; ...), plot_xz(f, rundir, name; ...)
 
 An x–z section at y index `j` of a snapshot `s` (from `read_snapshot` or `checkpoint_snapshot`), or of
-variable `name` at time index `n` of `_fields.nc`.
+variable `name` at time index `n` of `_fields.nc`. With `f` (e.g. log10), of f of the variable.
 """
-function plot_xz(s::NamedTuple; j = 1, zmax = 16_000)
+plot_xz(s::NamedTuple; kw...) = plot_xz(identity, s; kw...)
+
+function plot_xz(f::Function, s::NamedTuple; j = 1, zmax = 16_000)
     scale, units = display_units(s.name, s.units)
-    A = scale .* s.data[:, j, :]
+    A = apply_finite(f, scale .* s.data[:, j, :])
     below = s.z .<= zmax
-    colormap, colorrange = s.name in ("u", "v", "w") ? (:balance, symmetric_range(A[:, below])) : (:viridis, Makie.automatic)
+    colormap, colorrange = color_scale(f, s.name, A[:, below])
     fig = Figure(size = (1000, 450))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "z (km)", limits = (nothing, (0, zmax / 1e3)),
-              title = "$(s.name) ($units), y = $(round(s.y[j] / 1e3; digits = 1)) km, t = $(round(s.t; digits = 3)) d")
+              title = "$(labelled(f, s.name, units)), y = $(round(s.y[j] / 1e3; digits = 1)) km, t = $(round(s.t; digits = 3)) d")
     hm = heatmap!(ax, s.x ./ 1e3, s.z ./ 1e3, A; colormap, colorrange)
     Colorbar(fig[1, 2], hm)
     return fig
 end
 
-plot_xz(rundir::AbstractString, name; j = 1, n = last, zmax = 16_000, kind = "fields", prefix = "monsoon_convection") =
-    plot_xz(read_snapshot(rundir, name; kind, n, prefix); j, zmax)
+plot_xz(rundir::AbstractString, name; kw...) = plot_xz(identity, rundir, name; kw...)
+
+plot_xz(f::Function, rundir::AbstractString, name; j = 1, n = last, zmax = 16_000, kind = "fields",
+        prefix = "monsoon_convection") =
+    plot_xz(f, read_snapshot(rundir, name; kind, n, prefix); j, zmax)
 
 """
     plot_xy(s; z = 0)
     plot_xy(rundir, name; z = 0, n = last, kind = "surface", prefix = "monsoon_convection")
+    plot_xy(f, s; ...), plot_xy(f, rundir, name; ...)
 
 An x–y map at the level nearest height `z` (m) of a snapshot `s`, or of variable `name` at time
-index `n` of `_surface.nc` (lowest level, hourly) or, with `kind = "fields"`, `_fields.nc`.
+index `n` of `_surface.nc` (lowest level, hourly) or, with `kind = "fields"`, `_fields.nc`. With `f`
+(e.g. log10), of f of the variable.
 """
-function plot_xy(s::NamedTuple; z = 0)
+plot_xy(s::NamedTuple; kw...) = plot_xy(identity, s; kw...)
+
+function plot_xy(f::Function, s::NamedTuple; z = 0)
     k = argmin(abs.(s.z .- z))
     scale, units = display_units(s.name, s.units)
-    A = scale .* s.data[:, :, k]
-    colormap, colorrange = s.name in ("u", "v", "w") ? (:balance, symmetric_range(A)) : (:viridis, Makie.automatic)
+    A = apply_finite(f, scale .* s.data[:, :, k])
+    colormap, colorrange = color_scale(f, s.name, A)
     fig = Figure(size = (1000, 550))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "y (km)", aspect = DataAspect(),
-              title = "$(s.name) ($units), z = $(round(Int, s.z[k])) m, t = $(round(s.t; digits = 3)) d")
+              title = "$(labelled(f, s.name, units)), z = $(round(Int, s.z[k])) m, t = $(round(s.t; digits = 3)) d")
     hm = heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, A; colormap, colorrange)
     Colorbar(fig[1, 2], hm)
     return fig
 end
 
-plot_xy(rundir::AbstractString, name; z = 0, n = last, kind = "surface", prefix = "monsoon_convection") =
-    plot_xy(read_snapshot(rundir, name; kind, n, prefix); z)
+plot_xy(rundir::AbstractString, name; kw...) = plot_xy(identity, rundir, name; kw...)
+
+plot_xy(f::Function, rundir::AbstractString, name; z = 0, n = last, kind = "surface", prefix = "monsoon_convection") =
+    plot_xy(f, read_snapshot(rundir, name; kind, n, prefix); z)
 
 """
     animate_surface(rundir, file; name = "qv", framerate = 6, prefix = "monsoon_convection")
+    animate_surface(f, rundir, file; ...)
 
-Movie (`file`, e.g. "qv_surface.mp4") of the hourly lowest-level maps of `name`, with a fixed
-color range.
+Movie (`file`, e.g. "qv_surface.mp4") of the hourly lowest-level maps of `name` (or of f of it), with
+a fixed color range.
 """
-function animate_surface(rundir, file; name = "qv", framerate = 6, prefix = "monsoon_convection")
+animate_surface(rundir, file; kw...) = animate_surface(identity, rundir, file; kw...)
+
+function animate_surface(f::Function, rundir, file; name = "qv", framerate = 6, prefix = "monsoon_convection")
     Nt = length(snapshot_times(rundir; kind = "surface", prefix))
     s = read_snapshot(rundir, name; kind = "surface", n = 1, prefix)
     scale, units = display_units(name, s.units)
     data, t = NCDataset(output_file(rundir, "surface"; prefix)) do ds
-        scale .* read_var(ds, name)[:, :, 1, :], ds["time"].var[:] ./ day
+        apply_finite(f, scale .* read_var(ds, name)[:, :, 1, :]), ds["time"].var[:] ./ day
     end
-    colormap, colorrange = name in ("u", "v", "w") ? (:balance, symmetric_range(data)) : (:viridis, extrema(filter(isfinite, data)))
+    colormap, colorrange = color_scale(f, name, data)
+    label = labelled(f, name, units)
     n = Observable(1)
     fig = Figure(size = (1000, 550))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "y (km)", aspect = DataAspect(),
-              title = @lift("$name ($units), lowest level, t = $(round(t[$n]; digits = 3)) d"))
+              title = @lift("$label, lowest level, t = $(round(t[$n]; digits = 3)) d"))
     hm = heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, @lift(data[:, :, $n]); colormap, colorrange)
     Colorbar(fig[1, 2], hm)
     record(fig, file, 1:Nt; framerate) do nn
