@@ -18,6 +18,9 @@
 
 using CairoMakie, NCDatasets, JLD2, Statistics
 
+# Font size of all figures; change it in a session with update_theme!(fontsize = 16)
+set_theme!(fontsize = 20)
+
 const day = 86400.0                                       # s
 
 #####
@@ -151,11 +154,29 @@ function time_height!(fig, i, t, z, A; title, colormap = :viridis, colorrange = 
 end
 
 """
+    plot_axes(fig)
+
+The axes of a figure, top to bottom then left to right (colorbars and legends left out). Set limits
+on one and redisplay the figure:
+
+    fig = plot_time_height(rundir)
+    ax = plot_axes(fig)[2]
+    xlims!(ax, 1, 2)        # days
+    ylims!(ax, 0, 5)        # km
+    fig
+
+Time–height panels share the time axis, so `xlims!` on one sets them all. Heights are in km and
+times in days, as on the axes.
+"""
+plot_axes(fig) = filter(c -> c isa Axis, fig.content)
+
+"""
     plot_time_height(rundir; zmax = 12000, reference = first_profile, prefix = "monsoon_convection")
 
 Time–height sections of the horizontal means: T and qᵛ anomalies from `reference` (`first_profile`,
-the first hourly mean, or `time_mean`), cloud condensate (qcl + qci), precipitation (qr + qsn) and
-radiative flux divergence (positive: cooling).
+the first hourly mean, or `time_mean`), cloud liquid, cloud ice, rain and snow (each with the 0 °C
+level of the mean T), and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`:
+1 T, 2 qᵛ, 3 qcl, 4 qci, 5 qr, 6 qsn, 7 radiation.
 """
 function plot_time_height(rundir; zmax = 12_000, reference = first_profile, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
@@ -163,17 +184,19 @@ function plot_time_height(rundir; zmax = 12_000, reference = first_profile, pref
     T′ = p.T .- reference(p.T)
     q′ = 1e3 .* (p.qv .- reference(p.qv))
     anomaly = reference === first_profile ? "change since t = $(round(p.t[1]; digits = 2)) d" : "anomaly from the time mean"
-    fig = Figure(size = (900, 1200), fontsize = 14)
+    fig = Figure(size = (900, 1700))
     axes = [time_height!(fig, 1, p.t, p.z, T′; title = "T (K), $anomaly", colormap = :balance,
                          colorrange = symmetric_range(T′[below, :]), zmax),
             time_height!(fig, 2, p.t, p.z, q′; title = "qᵛ (g/kg), $anomaly", colormap = :balance,
-                         colorrange = symmetric_range(q′[below, :]), zmax),
-            time_height!(fig, 3, p.t, p.z, 1e3 .* (p.qcl .+ p.qci); title = "cloud liquid + ice (g/kg)",
-                         colormap = :dense, zmax),
-            time_height!(fig, 4, p.t, p.z, 1e3 .* (p.qr .+ p.qsn); title = "rain + snow (g/kg)",
-                         colormap = :dense, zmax),
-            time_height!(fig, 5, p.t, p.z, p.radiative_flux_divergence; title = "radiative flux divergence (W/m³)",
-                         colormap = :balance, colorrange = symmetric_range(p.radiative_flux_divergence[below, :]), zmax)]
+                         colorrange = symmetric_range(q′[below, :]), zmax)]
+    # Each condensate species separately, with the 0 °C level of the mean T (dashed)
+    for (i, (name, q)) in enumerate((("cloud liquid", p.qcl), ("cloud ice", p.qci), ("rain", p.qr), ("snow", p.qsn)))
+        ax = time_height!(fig, 2 + i, p.t, p.z, 1e3 .* q; title = "$name (g/kg), dashed: 0 °C", colormap = :dense, zmax)
+        contour!(ax, p.t, p.z ./ 1e3, permutedims(p.T); levels = [273.15], color = :black, linestyle = :dash)
+        push!(axes, ax)
+    end
+    push!(axes, time_height!(fig, 7, p.t, p.z, p.radiative_flux_divergence; title = "radiative flux divergence (W/m³)",
+                             colormap = :balance, colorrange = symmetric_range(p.radiative_flux_divergence[below, :]), zmax))
     foreach(ax -> hidexdecorations!(ax; grid = false), axes[1:end-1])
     axes[end].xlabel = "time (days)"
     linkxaxes!(axes...)
@@ -188,7 +211,7 @@ Time–height sections of the horizontal-mean u and v, and the rms vertical velo
 function plot_wind_time_height(rundir; zmax = 20_000, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
     below = p.z .<= zmax
-    fig = Figure(size = (900, 750), fontsize = 14)
+    fig = Figure(size = (900, 750))
     axes = [time_height!(fig, 1, p.t, p.z, p.u; title = "u (m/s)", colormap = :balance,
                          colorrange = symmetric_range(p.u[below, :]), zmax),
             time_height!(fig, 2, p.t, p.z, p.v; title = "v (m/s)", colormap = :balance,
@@ -208,12 +231,13 @@ Horizontal-mean θ, qᵛ, cloud condensate, u and v at the hourly means `ns` (in
 function plot_profiles(rundir; ns = (first, last), zmax = 16_000, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
     Nt = length(p.t)
-    fig = Figure(size = (1200, 500), fontsize = 14)
+    fig = Figure(size = (1500, 600))
     panels = [("θ (K)", p.theta), ("qᵛ (g/kg)", 1e3 .* p.qv), ("cloud liquid + ice (g/kg)", 1e3 .* (p.qcl .+ p.qci)),
               ("u (m/s)", p.u), ("v (m/s)", p.v)]
     below = p.z .<= zmax
     for (j, (label, A)) in enumerate(panels)
-        ax = Axis(fig[1, j]; xlabel = label, ylabel = j == 1 ? "z (km)" : "", limits = (nothing, (0, zmax / 1e3)))
+        ax = Axis(fig[1, j]; xlabel = label, ylabel = j == 1 ? "z (km)" : "", limits = (nothing, (0, zmax / 1e3)),
+                  xticks = WilkinsonTicks(3))
         j > 1 && hideydecorations!(ax; grid = false)
         for n in ns
             nt = time_index(n, Nt)
@@ -236,7 +260,7 @@ function plot_xz(s::NamedTuple; j = 1, zmax = 16_000)
     A = scale .* s.data[:, j, :]
     below = s.z .<= zmax
     colormap, colorrange = s.name in ("u", "v", "w") ? (:balance, symmetric_range(A[:, below])) : (:viridis, Makie.automatic)
-    fig = Figure(size = (1000, 450), fontsize = 14)
+    fig = Figure(size = (1000, 450))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "z (km)", limits = (nothing, (0, zmax / 1e3)),
               title = "$(s.name) ($units), y = $(round(s.y[j] / 1e3; digits = 1)) km, t = $(round(s.t; digits = 3)) d")
     hm = heatmap!(ax, s.x ./ 1e3, s.z ./ 1e3, A; colormap, colorrange)
@@ -259,7 +283,7 @@ function plot_xy(s::NamedTuple; z = 0)
     scale, units = display_units(s.name, s.units)
     A = scale .* s.data[:, :, k]
     colormap, colorrange = s.name in ("u", "v", "w") ? (:balance, symmetric_range(A)) : (:viridis, Makie.automatic)
-    fig = Figure(size = (1000, 550), fontsize = 14)
+    fig = Figure(size = (1000, 550))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "y (km)", aspect = DataAspect(),
               title = "$(s.name) ($units), z = $(round(Int, s.z[k])) m, t = $(round(s.t; digits = 3)) d")
     hm = heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, A; colormap, colorrange)
@@ -285,7 +309,7 @@ function animate_surface(rundir, file; name = "qv", framerate = 6, prefix = "mon
     end
     colormap, colorrange = name in ("u", "v", "w") ? (:balance, symmetric_range(data)) : (:viridis, extrema(filter(isfinite, data)))
     n = Observable(1)
-    fig = Figure(size = (1000, 550), fontsize = 14)
+    fig = Figure(size = (1000, 550))
     ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "y (km)", aspect = DataAspect(),
               title = @lift("$name ($units), lowest level, t = $(round(t[$n]; digits = 3)) d"))
     hm = heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, @lift(data[:, :, $n]); colormap, colorrange)
