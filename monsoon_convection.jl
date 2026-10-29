@@ -12,12 +12,12 @@ using Oceananigans.Units: second, seconds, minute, minutes, hour, hours, day, da
 # Run
 arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless CUDA works.
 small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
-restart                 = true         # continue from restart_checkpoint, appending to this directory's NetCDF
+restart                 = false        # first start; then true. continue from restart_checkpoint, appending to this directory's NetCDF
 restart_checkpoint      = :latest      # :latest (this directory) | another run's directory, e.g. "../ekamsat-ctl",
                                        # to branch from its newest checkpoint; then set back to :latest
-stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, from the original start
+stop_time               = small_test ? 1hour : 2days  # TOTAL simulated time, from the original start
 checkpoint_interval     = small_test ? 30minutes : 1hour  # only the latest checkpoint is kept; none on NaN
-debug_nan               = true         # print extremes every 10 iterations; stop at the first NaN/Inf
+debug_nan               = false        # print extremes every 10 iterations; stop at the first NaN/Inf
 
 # Domain
 Nx, Ny                  = small_test ? (32, 16) : (1024, 512)  # columns, Δx = Δy = 500 m
@@ -32,7 +32,7 @@ seed                    = 2023         # random seed for the perturbations
 
 # Model
 float_type              = Float32      # model precision: Float32 (standard on GPUs) | Float64
-microphysics            = :one_moment  # :one_moment (cloud liquid, ice, rain, snow) | :p3 (not production ready)
+microphysics            = :p3          # :one_moment (cloud liquid, ice, rain, snow) | :p3 (not production ready)
 sponge_variables        = :w           # :w damps w only | :all also relaxes u, v, θ to the sounding
 sponge_timescale        = 300seconds   # damping time scale at the top
 
