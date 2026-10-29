@@ -71,8 +71,11 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   2. When p3-ctl0 has stopped at 2 days, submit the four branches (7 days), e.g. with
      `sbatch --dependency=afterok:<p3-ctl0 job id>`.
   3. After each branch's first start, set its `restart_checkpoint = :latest`.
-- **Test:** Mac CPU small test of a P3 control (1 h) and a branch restarting from it (to 2 h),
-  running 2026-10-29; result pending. P3 is still marked "not production ready" in the driver.
+- **Test** (Mac CPU, 2026-10-29): a P3 small-test control ran to 1 h, and a moistening branch
+  restarted from its checkpoint (iteration 422) and ran to 2 h, no errors. The small test forms no
+  condensate in 2 h (its 1 h state matches the one-moment run), so P3's processes are not yet
+  exercised; the GPU small test and the first hours of p3-ctl0 are the real check. P3 is still
+  marked "not production ready" in the driver.
 - **Breeze 0.13 / Oceananigans 0.116.1** (registered; includes our PR #1105): the dev link to
   `../Breeze.jl` is removed from `Project.toml` `[sources]`; `MonsoonConvection/Project.toml`
   compat bounds only Breeze (`"0.13"`); Oceananigans and CloudMicrophysics follow Breeze's own
