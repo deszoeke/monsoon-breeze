@@ -53,6 +53,33 @@ ignored), all in the new driver format with `implicit_rain_sink = false`, `debug
 3. **After each branch's first start**, set its `restart_checkpoint = :latest` before any
    resubmission; otherwise it restarts from ctl0's 2-day state again.
 
+## P3 run plan (2026-10-29)
+
+The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Breeze 0.13.
+
+- **Why a new tree:** a P3 model can't restart from a one-moment checkpoint. Oceananigans 0.116
+  restores by the checkpoint's field names, and the one-moment `ρqᶜⁱ`, `ρqˢⁿ` don't exist in P3
+  (`FieldError: type NamedTuple has no field ρqᶜⁱ`, Mac test). P3 also needs `ρnʳ, ρqⁱ, ρnⁱ, ρqᶠ,
+  ρbᶠ, ρqʷⁱ`, which the checkpoint lacks. Converting would need assumed particle sizes for the
+  number concentrations; not done.
+- **Drivers** (tracked): `run/ekamsat-p3-ctl0`, `-p3-ctl2`, `-p3-moisten1000-850`,
+  `-p3-moisten850-650`, `-p3-moisten650-440`, copies of the one-moment drivers with
+  `microphysics = :p3`; the branches have `restart_checkpoint = "../ekamsat-p3-ctl0"`.
+- **Order**, as for the one-moment tree:
+  1. `ekamsat-p3-ctl0` from rest (`restart = false`), 2 days. After its first start, set
+     `restart = true` so resubmissions continue from its latest checkpoint.
+  2. When p3-ctl0 has stopped at 2 days, submit the four branches (7 days), e.g. with
+     `sbatch --dependency=afterok:<p3-ctl0 job id>`.
+  3. After each branch's first start, set its `restart_checkpoint = :latest`.
+- **Test:** Mac CPU small test of a P3 control (1 h) and a branch restarting from it (to 2 h),
+  running 2026-10-29; result pending. P3 is still marked "not production ready" in the driver.
+- **Breeze 0.13 / Oceananigans 0.116.1** (registered; includes our PR #1105): the dev link to
+  `../Breeze.jl` is removed from `Project.toml` `[sources]`; `MonsoonConvection/Project.toml`
+  compat bounds only Breeze (`"0.13"`); Oceananigans and CloudMicrophysics follow Breeze's own
+  bounds. One-moment small test passes on the Mac (max qᵛ 21.35 vs 20.97 g/kg on 0.12.1).
+  Cluster: `git pull`, delete the root `Manifest.toml`, `Pkg.instantiate()` on each architecture.
+  The one-moment ctl0 ran on 0.12.1; its branches will run 0.13 if submitted after the update.
+
 ## Plotting (2026-10-28, updated 2026-10-29)
 
 - Everything is in `plots/`: `plotter.jl` (functions that read a run directory and return

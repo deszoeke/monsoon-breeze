@@ -6,7 +6,6 @@ MonsoonConvection = "8e36511d-e4b6-4ff3-8bd7-1125f50d537b"
 Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
 
 [sources]
-Breeze = {path = "../Breeze.jl"}
 IdealizedSounding = {path = "IdealizedSounding"}
 MonsoonConvection = {path = "MonsoonConvection"}
 
