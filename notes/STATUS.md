@@ -1,4 +1,4 @@
-# Status (updated 2026-10-28)
+# Status (updated 2026-10-29)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `one_moment_microphysics.md` (the switch from P3), `breeze_internals.md` (what we learned in
@@ -53,21 +53,32 @@ ignored), all in the new driver format with `implicit_rain_sink = false`, `debug
 3. **After each branch's first start**, set its `restart_checkpoint = :latest` before any
    resubmission; otherwise it restarts from ctl0's 2-day state again.
 
-## Plotting (2026-10-28)
+## Plotting (2026-10-28, updated 2026-10-29)
 
-- `plotter.jl`: functions that read a run directory and return CairoMakie figures; including it
-  only defines them. Own environment `plots/` (CairoMakie, NCDatasets, JLD2, Revise; no Breeze):
+- Everything is in `plots/`: `plotter.jl` (functions that read a run directory and return
+  CairoMakie figures; including it only defines them), `plots.ipynb`, and its own environment
+  (`plots/Project.toml`: CairoMakie, NCDatasets, JLD2, Revise, IJulia; no Breeze),
   `julia --project=plots -e 'using Pkg; Pkg.instantiate()'` once per machine.
-- Mac, interactively: `plots.ipynb` (`Pkg.activate("plots")`, `using Revise; includet("plotter.jl")`).
-  Cluster, no display: `julia --project=plots -e 'include("plotter.jl"); save_plots("run/ekamsat-ctl0")'`
-  writes PNGs to `<run>/plots`.
+- Notebook (run on the cluster, where the output is): `Pkg.activate`, `using Revise;
+  includet("plotter.jl")`. No display: `julia --project=plots -e 'include("plots/plotter.jl");
+  save_plots("run/ekamsat-ctl0")'` writes PNGs to `<run>/plots`.
 - Readers: `read_profiles` (hourly-mean profiles, (z, time)), `read_snapshot` (`_fields.nc` 3D or
   `_surface.nc` lowest level), `read_checkpoint` + `checkpoint_snapshot` (latest state; ρᵣ(z)
   estimated as ⟨ρθ⟩/⟨θ⟩ since the checkpoint has no grid or ρᵣ).
-- Plots: `plot_time_height` (T, qᵛ changes, condensate, precipitation, radiative flux divergence),
-  `plot_wind_time_height`, `plot_profiles`, `plot_xz`, `plot_xy`, `animate_surface` (hourly
-  lowest-level movie; 3D output is daily, too sparse to animate).
-- Tested on a CPU small test; not yet on a full run.
+- Plots: `plot_time_height` (T, qᵛ changes; cloud liquid, cloud ice, rain, snow in separate panels
+  with the 0 °C level; radiative flux divergence), `plot_wind_time_height`, `plot_profiles`,
+  `plot_xz`, `plot_xy`, `animate_surface` (hourly lowest level; 3D output is daily).
+  `plot_*(f, ...)` plots a function of the variable, e.g. `log10`; `plot_axes(fig)` returns the
+  axes for `xlims!`/`ylims!`. Font size 20 (`set_theme!`).
+- Used on ctl0 (cluster notebook). Snow ~0.04 g/kg above 8 km: units checked (mass fraction
+  ρqˢⁿ/ρᵣ, kg/kg moist air, plotted in g/kg); not a #1124 issue (that PR is θˡⁱ thermodynamics).
+  Open: compare snow with cloud ice, and check for rain well above 0 °C.
+- **Separate plotting session.** Plot iteration (color scales, axes, log scales, new panels) runs
+  in its own Claude session, started in `plots/` (`claude --model sonnet`), with instructions in
+  `plots/CLAUDE.md` (scope, data, conventions, notebook editing with `nb.py`). It owns `plots/`.
+  Model, Breeze, run and physical-interpretation questions come back to the main session
+  (repository root), which sends lookups to `code-reader`. The user routes between them; the
+  sessions share only files and git, so pull and re-read before editing.
 
 ## Vapor-source experiments (planned 2026-10-27)
 
