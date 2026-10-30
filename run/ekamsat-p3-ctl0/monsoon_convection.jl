@@ -12,7 +12,7 @@ using Oceananigans.Units: second, seconds, minute, minutes, hour, hours, day, da
 # Run
 arch                    = :gpu         # :gpu | :cpu. :gpu stops at once unless CUDA works.
 small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h; a code check only
-restart                 = false        # first start; then true. continue from restart_checkpoint, appending to this directory's NetCDF
+restart                 = true         # continue from restart_checkpoint, appending to this directory's NetCDF
 restart_checkpoint      = :latest      # :latest (this directory) | another run's directory, e.g. "../ekamsat-ctl",
                                        # to branch from its newest checkpoint; then set back to :latest
 stop_time               = small_test ? 1hour : 2days  # TOTAL simulated time, from the original start

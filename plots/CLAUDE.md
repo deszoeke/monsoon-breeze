@@ -22,7 +22,13 @@ here for plot iteration; the repository's main session handles the model, runs a
   - `_surface.nc`: hourly lowest-level snapshots, (x, y, 1, time);
   - `_fields.nc`: 3D snapshots (x, y, z, time), daily (30 min in a small test);
   - `_checkpoint_iteration<N>.jld2`: latest state, ρ-weighted fields with halos, no grid or ρᵣ.
-- Names in the files are ASCII: `qv qcl qci qr qsn ql qi theta T u v w`. Mass fractions are
+- Current runs: the P3 tree, `run/ekamsat-p3-ctl0` (0–2 days) and its branches `-p3-ctl2`,
+  `-p3-moisten1000-850`, `-p3-moisten850-650`, `-p3-moisten650-440` (from 2 days, still
+  running). See `../notes/STATUS.md` "P3 runs".
+- Names in the files are ASCII. One-moment: `qv qcl qci qr qsn ql qi theta T u v w`. P3:
+  `qv qcl qr nr qi ni qf bf qwi theta T u v w` (no `qci`, `qsn`; `qi` is total ice, `qf` rime,
+  `bf` rime volume, `qwi` liquid on ice, `n*` numbers per kg). `plotter.jl` still assumes the
+  one-moment names. Mass fractions are
   kg/kg per kg of moist air (ρq/ρᵣ in the anelastic model), not mixing ratios.
 - Reading the full 3D field to plot one level is ~120 MB per variable at full size; prefer
   `_surface.nc` or the profiles when they answer the question.

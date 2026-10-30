@@ -1,4 +1,4 @@
-# Status (updated 2026-10-29)
+# Status (updated 2026-10-30)
 
 Read this first when picking the work back up. Details: `nan_investigation.md` (what failed and
 why), `one_moment_microphysics.md` (the switch from P3), `breeze_internals.md` (what we learned in
@@ -53,6 +53,18 @@ ignored), all in the new driver format with `implicit_rain_sink = false`, `debug
 3. **After each branch's first start**, set its `restart_checkpoint = :latest` before any
    resubmission; otherwise it restarts from ctl0's 2-day state again.
 
+## P3 runs (2026-10-30)
+
+The P3 tree is the current experiment; output goes to `run/ekamsat-p3-*` on the cluster.
+
+- `ekamsat-p3-ctl0` finished at 2 days. Its driver now has `restart = true`; don't resubmit it.
+- The four branches started from its 2-day checkpoint (GH200) and stopped at the 6 h wall limit,
+  checkpointing 10 min before. They were resubmitted with a 12 h limit (`monsoon_job.sh`).
+- All four resumed from their own checkpoints (`restart_checkpoint = :latest`).
+- P3 output names differ from one-moment: `qcl qr nr qi ni qf bf qwi qv` (plus
+  `surface_temperature`); no `qci`, `qsn`. `qi` is total ice, `qf` rime mass, `bf` rime volume,
+  `qwi` liquid on ice, `n*` numbers per kg of moist air.
+
 ## P3 run plan (2026-10-29)
 
 The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Breeze 0.13.
@@ -100,7 +112,9 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   `plot_xz`, `plot_xy`, `animate_surface` (hourly lowest level; 3D output is daily).
   `plot_*(f, ...)` plots a function of the variable, e.g. `log10`; `plot_axes(fig)` returns the
   axes for `xlims!`/`ylims!`. Font size 20 (`set_theme!`).
-- Used on ctl0 (cluster notebook). Snow ~0.04 g/kg above 8 km: units checked (mass fraction
+- `plotter.jl` was written for one-moment output (`qci`, `qsn`). The P3 runs need it to handle
+  `qi`, `qf`, `qwi` and the numbers (plotting session).
+- Used on the one-moment ctl0 (cluster notebook). Snow ~0.04 g/kg above 8 km: units checked (mass fraction
   ρqˢⁿ/ρᵣ, kg/kg moist air, plotted in g/kg); not a #1124 issue (that PR is θˡⁱ thermodynamics).
   Open: compare snow with cloud ice, and check for rain well above 0 °C.
 - **Separate plotting session.** Plot iteration (color scales, axes, log scales, new panels) runs
