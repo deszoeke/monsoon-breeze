@@ -54,7 +54,10 @@ here for plot iteration; the repository's main session handles the model, runs a
 
 ## Notebook
 
-- `plots.ipynb` holds embedded images (several MB): never Read or grep its JSON. Use
+- Two notebooks: `plot_profs.ipynb` needs only the small `_profiles.nc` files (runs on the Mac
+  after `fetch_profiles.sh`); `plots.ipynb` also needs surface, 3D and checkpoint files (cluster).
+  Put a new plot in the one whose files it reads.
+- The notebooks hold embedded images (several MB): never Read or grep their JSON. Use
   `python3 ~/.claude/skills/notebooks/nb.py` (`outline`, `cat`, `set`, `insert`, `edit`).
 - First cell: `Pkg.activate`, `using Revise; includet("plotter.jl")`, `rundir`. Figures are kept in
   variables (`fig = plot_...`) so later cells can zoom (`plot_axes(fig)[i]`, `xlims!`, `ylims!`) or
@@ -73,3 +76,8 @@ here for plot iteration; the repository's main session handles the model, runs a
 - For a substantive change (new plot or tool, a finding), ask whether to update
   `../notes/STATUS.md` (Plotting section) before suggesting a commit. Small changes: don't ask.
 - Settings are Julia keyword values or assignments, never `--flag` syntax.
+- Noteworthy results (numbers, comparisons, findings that go in STATUS.md or a reply) come from
+  code that is saved and rerunnable: a function in `plotter.jl` or a notebook cell, reading the
+  run files. Never from scratch scripts, scratchpad PNGs or numbers read off a plot. If a number
+  was read off a plot, say so and add the computing cell. Write findings to STATUS.md only
+  after the cell has been run, and name the cell or function there.

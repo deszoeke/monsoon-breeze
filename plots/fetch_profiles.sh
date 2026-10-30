@@ -8,8 +8,11 @@
 host=hpc.ceoas.oregonstate.edu
 remote=/ceoas/deszoeks/projects/monsoon-breeze/run
 runs=("$@")
-[ ${#runs[@]} -eq 0 ] && runs=(ekamsat-p3-ctl0 ekamsat-p3-ctl2 ekamsat-p3-moisten1000-850
-                                ekamsat-p3-moisten850-650 ekamsat-p3-moisten650-440)
+[ ${#runs[@]} -eq 0 ] && runs=( ekamsat-p3-ctl0 ekamsat-p3-ctl2 ekamsat-p3-moisten1000-850
+                                ekamsat-p3-moisten850-650 ekamsat-p3-moisten650-440 
+			        one-moment/ekamsat-ctl0 one-moment/ekamsat-ctl2 
+				one-moment/ekamsat-moisten1000-850 one-moment/ekamsat-moisten850-650
+				one-moment/ekamsat-moisten650-440 )
 
 local_run="$(cd "$(dirname "$0")/.." && pwd)/run"
 for r in "${runs[@]}"; do

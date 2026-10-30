@@ -115,10 +115,14 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
 - P3 output (2026-10-30): `condensates(p)` picks the four condensate panels from the file:
   one-moment cloud liquid, cloud ice, rain, snow; P3 cloud liquid, total ice `qi`, rain, rime `qf`.
   `plot_time_height` and `plot_profiles` use it. `qwi` and the numbers are not plotted yet.
+- Two notebooks: `plots/plot_profs.ipynb` (profile data only: time–height, wind, profiles, P3
+  branches) and `plots/plots.ipynb` (surface, 3D, checkpoint).
 - On the Mac: `plots/fetch_profiles.sh [run ...]` rsyncs the small `_profiles.nc` (~300 KB) from
   the cluster into the local `run/<name>/` (default: the P3 tree). Read-only, safe while runs write;
   output stays git-ignored.
-- **P3 branches, first look** (`plot_time_height`, 2.04 to ~4 d, changes since 2.04 d):
+- **P3 branches, first look** (`plot_time_height`, 2.04 to ~4 d, changes since 2.04 d; numbers read off
+  the plots; `p3_summary` in `plots/plot_profs.ipynb` computes them (max Δqᵛ and its height, ΔT, ice, rime/ice
+  at 10–12 km, rain top), run it to replace these):
   - ctl2: qᵛ +0.7 g/kg at 4–8 km, slight drying below 2 km; T +0.5 K at 0–6 km, a cool band at 7–8 km.
   - moisten1000-850: extra vapour stays at 0–1.5 km; mid-levels moisten about as in ctl2.
   - moisten850-650: largest change ~+1.2 g/kg at ~2–3 km.
