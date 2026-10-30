@@ -16,7 +16,9 @@ here for plot iteration; the repository's main session handles the model, runs a
 ## Data
 
 - Run output lives on the cluster in `run/<name>/` (`/ceoas/deszoeks/projects/monsoon-breeze`);
-  the user runs the notebook there. On the Mac, test on a small-test run directory.
+  the user runs the notebook there. On the Mac, `plots/fetch_profiles.sh [run ...]` rsyncs the
+  small `_profiles.nc` into the local `run/<name>/` (read-only on the cluster; scp/sftp is
+  disabled on hpc, rsync and `ssh cat` work). Large files stay on the cluster.
 - Files (prefix `monsoon_convection`, or `monsoon_convection_small_test`):
   - `_profiles.nc`: horizontal means averaged over each hour, (z, time), plus `radiative_flux_divergence`, `w2`;
   - `_surface.nc`: hourly lowest-level snapshots, (x, y, 1, time);
@@ -27,8 +29,9 @@ here for plot iteration; the repository's main session handles the model, runs a
   running). See `../notes/STATUS.md` "P3 runs".
 - Names in the files are ASCII. One-moment: `qv qcl qci qr qsn ql qi theta T u v w`. P3:
   `qv qcl qr nr qi ni qf bf qwi theta T u v w` (no `qci`, `qsn`; `qi` is total ice, `qf` rime,
-  `bf` rime volume, `qwi` liquid on ice, `n*` numbers per kg). `plotter.jl` still assumes the
-  one-moment names. Mass fractions are
+  `bf` rime volume, `qwi` liquid on ice, `n*` numbers per kg). `condensates(p)` in
+  `plotter.jl` picks the one-moment or P3 condensate panels; `qwi` and numbers aren't plotted yet.
+  Mass fractions are
   kg/kg per kg of moist air (ρq/ρᵣ in the anelastic model), not mixing ratios.
 - Reading the full 3D field to plot one level is ~120 MB per variable at full size; prefer
   `_surface.nc` or the profiles when they answer the question.
