@@ -95,7 +95,7 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   Cluster: `git pull`, delete the root `Manifest.toml`, `Pkg.instantiate()` on each architecture.
   The one-moment ctl0 ran on 0.12.1; its branches will run 0.13 if submitted after the update.
 
-## Plotting (2026-10-28, updated 2026-10-29)
+## Plotting (2026-10-28, updated 2026-10-30)
 
 - Everything is in `plots/`: `plotter.jl` (functions that read a run directory and return
   CairoMakie figures; including it only defines them), `plots.ipynb`, and its own environment
@@ -112,8 +112,21 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   `plot_xz`, `plot_xy`, `animate_surface` (hourly lowest level; 3D output is daily).
   `plot_*(f, ...)` plots a function of the variable, e.g. `log10`; `plot_axes(fig)` returns the
   axes for `xlims!`/`ylims!`. Font size 20 (`set_theme!`).
-- `plotter.jl` was written for one-moment output (`qci`, `qsn`). The P3 runs need it to handle
-  `qi`, `qf`, `qwi` and the numbers (plotting session).
+- P3 output (2026-10-30): `condensates(p)` picks the four condensate panels from the file:
+  one-moment cloud liquid, cloud ice, rain, snow; P3 cloud liquid, total ice `qi`, rain, rime `qf`.
+  `plot_time_height` and `plot_profiles` use it. `qwi` and the numbers are not plotted yet.
+- On the Mac: `plots/fetch_profiles.sh [run ...]` rsyncs the small `_profiles.nc` (~300 KB) from
+  the cluster into the local `run/<name>/` (default: the P3 tree). Read-only, safe while runs write;
+  output stays git-ignored.
+- **P3 branches, first look** (`plot_time_height`, 2.04 to ~4 d, changes since 2.04 d):
+  - ctl2: qᵛ +0.7 g/kg at 4–8 km, slight drying below 2 km; T +0.5 K at 0–6 km, a cool band at 7–8 km.
+  - moisten1000-850: extra vapour stays at 0–1.5 km; mid-levels moisten about as in ctl2.
+  - moisten850-650: largest change ~+1.2 g/kg at ~2–3 km.
+  - moisten650-440: largest change ~+2 g/kg at 4–7 km; more ice and rime aloft (up to ~0.08 g/kg).
+  - Cloud liquid, rain and radiation are much the same in all four. Ice and rime reach the 12 km
+    plot top (use `zmax = 16_000`).
+  - Open (main session): rime is about half the ice mass at 10–12 km; a little rain sits above
+    the 0 °C level, up to ~6 km.
 - Used on the one-moment ctl0 (cluster notebook). Snow ~0.04 g/kg above 8 km: units checked (mass fraction
   ρqˢⁿ/ρᵣ, kg/kg moist air, plotted in g/kg); not a #1124 issue (that PR is θˡⁱ thermodynamics).
   Open: compare snow with cloud ice, and check for rain well above 0 °C.

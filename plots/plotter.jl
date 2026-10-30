@@ -193,6 +193,10 @@ times in days, as on the axes.
 """
 plot_axes(fig) = filter(c -> c isa Axis, fig.content)
 
+# The four condensate panels: one-moment (cloud ice, snow) or P3 (total ice, rime) output
+condensates(p) = haskey(p, :qsn) ? (("cloud liquid", p.qcl), ("cloud ice", p.qci), ("rain", p.qr), ("snow", p.qsn)) :
+                                   (("cloud liquid", p.qcl), ("ice", p.qi), ("rain", p.qr), ("rime", p.qf))
+
 """
     plot_time_height(rundir; zmax = 12000, reference = first_profile, prefix = "monsoon_convection")
     plot_time_height(f, rundir; ...)
@@ -200,9 +204,9 @@ plot_axes(fig) = filter(c -> c isa Axis, fig.content)
 `f` (e.g. log10) applies to the four condensate panels, in g/kg.
 
 Time–height sections of the horizontal means: T and qᵛ anomalies from `reference` (`first_profile`,
-the first hourly mean, or `time_mean`), cloud liquid, cloud ice, rain and snow (each with the 0 °C
-level of the mean T), and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`:
-1 T, 2 qᵛ, 3 qcl, 4 qci, 5 qr, 6 qsn, 7 radiation.
+the first hourly mean, or `time_mean`), four condensates (each with the 0 °C level of the mean T),
+and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`: 1 T, 2 qᵛ,
+3 qcl, 4 qci, 5 qr, 6 qsn (P3: 4 qi total ice, 6 qf rime), 7 radiation.
 """
 plot_time_height(rundir; kw...) = plot_time_height(identity, rundir; kw...)
 
@@ -218,7 +222,7 @@ function plot_time_height(f::Function, rundir; zmax = 12_000, reference = first_
             time_height!(fig, 2, p.t, p.z, q′; title = "qᵛ (g/kg), $anomaly", colormap = :balance,
                          colorrange = symmetric_range(q′[below, :]), zmax)]
     # Each condensate species separately, with the 0 °C level of the mean T (dashed)
-    for (i, (name, q)) in enumerate((("cloud liquid", p.qcl), ("cloud ice", p.qci), ("rain", p.qr), ("snow", p.qsn)))
+    for (i, (name, q)) in enumerate(condensates(p))
         A = apply_finite(f, 1e3 .* q)
         ax = time_height!(fig, 2 + i, p.t, p.z, A; title = "$(labelled(f, name, "g/kg")); dashed: 0 °C",
                           colormap = :dense, colorrange = finite_range(A[below, :]), zmax)
@@ -268,7 +272,7 @@ function plot_profiles(f::Function, rundir; ns = (first, last), zmax = 16_000, p
     fig = Figure(size = (1500, 600))
     panels = [("θ (K)", p.theta),
               (labelled(f, "qᵛ", "g/kg"), apply_finite(f, 1e3 .* p.qv)),
-              (labelled(f, "cloud liquid + ice", "g/kg"), apply_finite(f, 1e3 .* (p.qcl .+ p.qci))),
+              (labelled(f, "cloud liquid + ice", "g/kg"), apply_finite(f, 1e3 .* (p.qcl .+ condensates(p)[2][2]))),
               ("u (m/s)", p.u), ("v (m/s)", p.v)]
     below = p.z .<= zmax
     for (j, (label, A)) in enumerate(panels)
