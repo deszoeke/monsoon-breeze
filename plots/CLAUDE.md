@@ -41,6 +41,13 @@ here for plot iteration; the repository's main session handles the model, runs a
 - Functions read a run directory and return a Makie `Figure`; including the file only defines
   them. `save_plots(rundir)` writes PNGs for the cluster (no display). CairoMakie, theme
   `fontsize = 20`.
+- Two layers. Building blocks draw into an `Axis` and return the heatmap: `time_height!(ax, p, name)`,
+  `profile!`, `xz!`, `xy!` (title and labels set; the `Colorbar` and layout are the caller's).
+  `plot_*` functions make a Figure from them; `compare_time_height` and `compare_profiles` put
+  runs in columns and variables in rows with a shared color scale per row. New plots: write the
+  `!` block first, then the figure function. Notebooks compose figures from the blocks:
+  `fig = Figure(); ax = Axis(fig[1, 1]); hm = time_height!(ax, p, "qv"); Colorbar(fig[1, 2], hm)`.
+- Variable names in profile plots are the file's strings ("qv", "qi", "w_rms", "qc").
 - Display units: mass fractions in g/kg (`display_units`), heights in km, times in days.
 - Functions of variables: every plot function has a method with `f` first, `plot_xz(f, rundir, name)`,
   applied elementwise to values in display units (`apply_finite`; non-finite → blank). In

@@ -40,15 +40,18 @@ time_index(f::Function, Nt) = f(1:Nt)
 
 Horizontal-mean profiles from `_profiles.nc` as a NamedTuple: `t` (days), `x`, `y`, `z` (cell
 centers), `zᶠ` (faces, for w and w2), all m, and each variable as a (z, time) array under its file
-name (T, theta, qv, qcl, qci, qr, qsn, u, v, w, w2, radiative_flux_divergence, ...).
+name (T, theta, qv, qcl, qci, qr, qsn, u, v, w, w2, radiative_flux_divergence, ...; P3: qi, qf, ...),
+plus `w_rms` = √w2 and `qc` = qcl + cloud ice (qci, or qi in P3).
 """
 function read_profiles(rundir; prefix = "monsoon_convection")
-    NCDataset(output_file(rundir, "profiles"; prefix)) do ds
+    p = NCDataset(output_file(rundir, "profiles"; prefix)) do ds
         names = [k for k in keys(ds) if k != "time" && "time" in dimnames(ds[k])]
         merge((; t = ds["time"].var[:] ./ day, x = ds["x_caa"][:], y = ds["y_aca"][:],
                  z = ds["z_aac"][:], zᶠ = ds["z_aaf"][:]),
               NamedTuple(Symbol(k) => read_var(ds, k) for k in names))
     end
+    ice = haskey(p, :qci) ? :qci : :qi
+    return merge(p, (; w_rms = sqrt.(max.(p.w2, 0)), qc = p.qcl .+ p[ice]))
 end
 
 """
@@ -168,19 +171,108 @@ color_scale(f, name, A) = (:viridis, finite_range(A))
 first_profile(A) = A[:, 1:1]
 time_mean(A) = mean(A; dims = 2)
 
-# One time–height panel at grid position fig[i, 1:2]
-function time_height!(fig, i, t, z, A; title, colormap = :viridis, colorrange = Makie.automatic, zmax)
-    ax = Axis(fig[i, 1]; title, ylabel = "z (km)", limits = (extrema(t), (0, zmax / 1e3)))
-    hm = heatmap!(ax, t, z ./ 1e3, permutedims(A); colormap, colorrange)
-    Colorbar(fig[i, 2], hm)
-    return ax
+#####
+##### Profile plots: building blocks that draw into an Axis, and figures made of them
+#####
+
+# Units of profile variables that aren't mass fractions (those display in g/kg)
+const profile_units = Dict("T" => "K", "theta" => "K", "u" => "m/s", "v" => "m/s", "w" => "m/s",
+                           "w_rms" => "m/s", "radiative_flux_divergence" => "W/m³")
+
+# Rows of a profile array are on z faces (w, w2, w_rms) or at cell centers
+vertical_coordinate(p, A) = size(A, 1) == length(p.z) ? p.z : p.zᶠ
+
+# A keyword left at Makie.automatic takes the default
+or_default(::Makie.Automatic, default) = default
+or_default(given, default) = given
+
+# A profile array as its anomaly from `reference` (first_profile, time_mean), or as it is (nothing)
+anomaly(::Nothing, A) = A
+anomaly(reference::Function, A) = A .- reference(A)
+
+anomaly_note(::Nothing, p) = ""
+anomaly_note(::typeof(first_profile), p) = "change since t = $(round(p.t[1]; digits = 2)) d"
+anomaly_note(::typeof(time_mean), p) = "anomaly from the time mean"
+anomaly_note(reference, p) = "anomaly"
+
+# In multi-panel plots f applies to the mass-fraction panels only, and a reference to T and qv only
+panel_function(f, name) = startswith(name, "q") ? f : identity
+reference_for(reference, name) = name in ("T", "qv") ? reference : nothing
+
+# The four condensate panels: one-moment (cloud liquid, cloud ice, rain, snow) or P3 (cloud liquid,
+# total ice, rain, rime) output
+condensate_names(p) = haskey(p, :qsn) ? ("qcl", "qci", "qr", "qsn") : ("qcl", "qi", "qr", "qf")
+
+# Colors of a profile variable: anomalies and signed variables symmetric about 0, else the data range
+profile_colors(f, ::Function, name, A) = (:balance, symmetric_range(A))
+profile_colors(::typeof(identity), ::Nothing, name, A) =
+    name in ("u", "v", "w", "radiative_flux_divergence") ? (:balance, symmetric_range(A)) : (:dense, finite_range(A))
+profile_colors(f, ::Nothing, name, A) = (:dense, finite_range(A))
+
+"""
+    profile_label(f, p, name; reference = nothing)
+
+Label of profile variable `name` (a string, as in `read_profiles`) in display units, e.g. "qv (g/kg),
+change since t = 2.04 d".
+"""
+function profile_label(f::Function, p, name; reference = nothing)
+    name = string(name)
+    scale, units = display_units(name, get(profile_units, name, ""))
+    join(filter(!isempty, [labelled(f, name, units), anomaly_note(reference, p)]), ", ")
 end
+
+"""
+    profile_field(f, p, name; reference = nothing, zmax = 12000)
+
+Profile variable `name` of `p` (from `read_profiles`) as plotted: `(; t, z, A, label)` with `A` (z, time)
+in display units, f of the anomaly from `reference` (`first_profile`, `time_mean`; `nothing` for the
+values), and `z` up to `zmax` (m).
+"""
+function profile_field(f::Function, p, name; reference = nothing, zmax = 12_000)
+    name = string(name)
+    A = getproperty(p, Symbol(name))
+    z = vertical_coordinate(p, A)
+    below = z .<= zmax
+    scale, units = display_units(name, get(profile_units, name, ""))
+    return (; t = p.t, z = z[below], A = apply_finite(f, scale .* anomaly(reference, A)[below, :]),
+            label = profile_label(f, p, name; reference))
+end
+
+"""
+    time_height!(ax, p, name; reference = nothing, zmax = 12000, colormap, colorrange)
+    time_height!(f, ax, p, name; ...)
+
+Draw the time–height section of profile variable `name` (a string: "T", "qv", "qcl", "w_rms", ...;
+`p` from `read_profiles`) into the Axis `ax`, and return the heatmap. With `f` (e.g. log10), f of
+the values in display units. With `reference` (`first_profile`, `time_mean`), the anomaly from it.
+`colormap` and `colorrange` default to a scale from the data; give the same `colorrange` to compare
+panels (or use `compare_time_height`). Axis title, labels and a `Colorbar` are the caller's:
+
+    fig = Figure(); ax = Axis(fig[1, 1]; title = "qv", ylabel = "z (km)")
+    hm = time_height!(ax, read_profiles(rundir), "qv"; reference = first_profile)
+    Colorbar(fig[1, 2], hm)
+"""
+function time_height!(f::Function, ax, p::NamedTuple, name; reference = nothing, zmax = 12_000,
+                      colormap = Makie.automatic, colorrange = Makie.automatic)
+    s = profile_field(f, p, name; reference, zmax)
+    default_map, default_range = profile_colors(f, reference, string(name), s.A)
+    xlims!(ax, extrema(s.t)...)
+    ylims!(ax, 0, zmax / 1e3)
+    return heatmap!(ax, s.t, s.z ./ 1e3, permutedims(s.A);
+                    colormap = or_default(colormap, default_map), colorrange = or_default(colorrange, default_range))
+end
+
+time_height!(ax, p::NamedTuple, name; kw...) = time_height!(identity, ax, p, name; kw...)
+
+# The 0 °C level of the mean T (dashed)
+freezing_level!(ax, p) =
+    contour!(ax, p.t, p.z ./ 1e3, permutedims(p.T); levels = [273.15], color = :black, linestyle = :dash)
 
 """
     plot_axes(fig)
 
-The axes of a figure, top to bottom then left to right (colorbars and legends left out). Set limits
-on one and redisplay the figure:
+The axes of a figure in the order they were made (colorbars and legends left out): top to bottom,
+then left to right. Set limits on one and redisplay the figure:
 
     fig = plot_time_height(rundir)
     ax = plot_axes(fig)[2]
@@ -188,14 +280,31 @@ on one and redisplay the figure:
     ylims!(ax, 0, 5)        # km
     fig
 
-Time–height panels share the time axis, so `xlims!` on one sets them all. Heights are in km and
-times in days, as on the axes.
+Time–height panels share the time axis, so `xlims!` on one sets them all (in a comparison, those of
+one column). Heights are in km and times in days, as on the axes.
 """
 plot_axes(fig) = filter(c -> c isa Axis, fig.content)
 
-# The four condensate panels: one-moment (cloud ice, snow) or P3 (total ice, rime) output
-condensates(p) = haskey(p, :qsn) ? (("cloud liquid", p.qcl), ("cloud ice", p.qci), ("rain", p.qr), ("snow", p.qsn)) :
-                                   (("cloud liquid", p.qcl), ("ice", p.qi), ("rain", p.qr), ("rime", p.qf))
+# One run's variables stacked in a column of time–height panels, a colorbar each
+function stacked_time_height(f::Function, p, names; reference = nothing, zmax, figsize)
+    fig = Figure(size = figsize)
+    axes = map(enumerate(names)) do (i, name)
+        g, r = panel_function(f, name), reference_for(reference, name)
+        ax = Axis(fig[i, 1]; ylabel = "z (km)")
+        Colorbar(fig[i, 2], time_height!(g, ax, p, name; reference = r, zmax))
+        title = profile_label(g, p, name; reference = r)
+        if name in condensate_names(p)
+            freezing_level!(ax, p)
+            title *= ", dashed: 0 °C"
+        end
+        ax.title = title
+        ax
+    end
+    foreach(ax -> hidexdecorations!(ax; grid = false), axes[1:end-1])
+    axes[end].xlabel = "time (days)"
+    linkxaxes!(axes...)
+    return fig
+end
 
 """
     plot_time_height(rundir; zmax = 12000, reference = first_profile, prefix = "monsoon_convection")
@@ -205,36 +314,15 @@ condensates(p) = haskey(p, :qsn) ? (("cloud liquid", p.qcl), ("cloud ice", p.qci
 
 Time–height sections of the horizontal means: T and qᵛ anomalies from `reference` (`first_profile`,
 the first hourly mean, or `time_mean`), four condensates (each with the 0 °C level of the mean T),
-and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`: 1 T, 2 qᵛ,
-3 qcl, 4 qci, 5 qr, 6 qsn (P3: 4 qi total ice, 6 qf rime), 7 radiation.
+and radiative flux divergence (positive: cooling). Panels from `plot_axes(fig)`: 1 T, 2 qv, then
+`condensate_names` (one-moment: qcl, qci, qr, qsn; P3: qcl, qi, qr, qf), 7 radiation.
 """
 plot_time_height(rundir; kw...) = plot_time_height(identity, rundir; kw...)
 
 function plot_time_height(f::Function, rundir; zmax = 12_000, reference = first_profile, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
-    below = p.z .<= zmax
-    T′ = p.T .- reference(p.T)
-    q′ = 1e3 .* (p.qv .- reference(p.qv))
-    anomaly = reference === first_profile ? "change since t = $(round(p.t[1]; digits = 2)) d" : "anomaly from the time mean"
-    fig = Figure(size = (900, 1700))
-    axes = [time_height!(fig, 1, p.t, p.z, T′; title = "T (K), $anomaly", colormap = :balance,
-                         colorrange = symmetric_range(T′[below, :]), zmax),
-            time_height!(fig, 2, p.t, p.z, q′; title = "qᵛ (g/kg), $anomaly", colormap = :balance,
-                         colorrange = symmetric_range(q′[below, :]), zmax)]
-    # Each condensate species separately, with the 0 °C level of the mean T (dashed)
-    for (i, (name, q)) in enumerate(condensates(p))
-        A = apply_finite(f, 1e3 .* q)
-        ax = time_height!(fig, 2 + i, p.t, p.z, A; title = "$(labelled(f, name, "g/kg")); dashed: 0 °C",
-                          colormap = :dense, colorrange = finite_range(A[below, :]), zmax)
-        contour!(ax, p.t, p.z ./ 1e3, permutedims(p.T); levels = [273.15], color = :black, linestyle = :dash)
-        push!(axes, ax)
-    end
-    push!(axes, time_height!(fig, 7, p.t, p.z, p.radiative_flux_divergence; title = "radiative flux divergence (W/m³)",
-                             colormap = :balance, colorrange = symmetric_range(p.radiative_flux_divergence[below, :]), zmax))
-    foreach(ax -> hidexdecorations!(ax; grid = false), axes[1:end-1])
-    axes[end].xlabel = "time (days)"
-    linkxaxes!(axes...)
-    return fig
+    names = ["T", "qv", condensate_names(p)..., "radiative_flux_divergence"]
+    return stacked_time_height(f, p, names; reference, zmax, figsize = (900, 1700))
 end
 
 """
@@ -242,51 +330,190 @@ end
 
 Time–height sections of the horizontal-mean u and v, and the rms vertical velocity √⟨w²⟩.
 """
-function plot_wind_time_height(rundir; zmax = 20_000, prefix = "monsoon_convection")
-    p = read_profiles(rundir; prefix)
-    below = p.z .<= zmax
-    fig = Figure(size = (900, 750))
-    axes = [time_height!(fig, 1, p.t, p.z, p.u; title = "u (m/s)", colormap = :balance,
-                         colorrange = symmetric_range(p.u[below, :]), zmax),
-            time_height!(fig, 2, p.t, p.z, p.v; title = "v (m/s)", colormap = :balance,
-                         colorrange = symmetric_range(p.v[below, :]), zmax),
-            time_height!(fig, 3, p.t, p.zᶠ, sqrt.(max.(p.w2, 0)); title = "√⟨w²⟩ (m/s)", colormap = :dense, zmax)]
-    foreach(ax -> hidexdecorations!(ax; grid = false), axes[1:end-1])
-    axes[end].xlabel = "time (days)"
-    linkxaxes!(axes...)
+plot_wind_time_height(rundir; zmax = 20_000, prefix = "monsoon_convection") =
+    stacked_time_height(identity, read_profiles(rundir; prefix), ["u", "v", "w_rms"]; zmax, figsize = (900, 750))
+
+"""
+    compare_time_height(runs, names; labels, reference = nothing, zmax = 12000, prefix = "monsoon_convection")
+    compare_time_height(f, runs, names; ...)
+
+Time–height sections of the variables `names` (strings: "T", "qv", "qr", ...; rows) in each of `runs`
+(columns): run directories, or profiles from `read_profiles`. `labels` title the columns (default
+the directory names). The runs of a row share a color scale and a colorbar. `reference`
+(`first_profile`, `time_mean`) plots anomalies from each run's own reference, of every variable.
+`f` (e.g. log10) applies to the mass-fraction variables only. Panels from `plot_axes(fig)`: column by
+column, so panel `(i, j)` of `nrows` rows is `(j - 1) * nrows + i`.
+
+    fig = compare_time_height(rundirs, ["qv", "T"]; reference = first_profile)
+"""
+compare_time_height(runs, names; kw...) = compare_time_height(identity, runs, names; kw...)
+
+compare_time_height(f::Function, rundirs::AbstractVector{<:AbstractString}, names;
+                    labels = basename.(rundirs), prefix = "monsoon_convection", kw...) =
+    compare_time_height(f, [read_profiles(d; prefix) for d in rundirs], names; labels, kw...)
+
+function compare_time_height(f::Function, ps::AbstractVector{<:NamedTuple}, names; labels = string.(eachindex(ps)),
+                             reference = nothing, zmax = 12_000,
+                             figsize = (350 * length(ps) + 200, 250 * length(names)))
+    names = string.(names)
+    nrows, ncols = length(names), length(ps)
+    fig = Figure(size = figsize)
+    axes = [Axis(fig[i, j]; title = i == 1 ? labels[j] : "", ylabel = j == 1 ? "z (km)" : "")
+            for i in 1:nrows, j in 1:ncols]
+    for (i, name) in enumerate(names)
+        g = panel_function(f, name)
+        A = reduce(vcat, [vec(profile_field(g, p, name; reference, zmax).A) for p in ps])
+        colormap, colorrange = profile_colors(g, reference, name, A)
+        hm = nothing
+        for (j, p) in enumerate(ps)
+            hm = time_height!(g, axes[i, j], p, name; reference, zmax, colormap, colorrange)
+        end
+        Colorbar(fig[i, ncols + 1], hm; label = profile_label(g, ps[1], name; reference))
+    end
+    foreach(ax -> hidexdecorations!(ax; grid = false), axes[1:end-1, :])
+    foreach(ax -> hideydecorations!(ax; grid = false), axes[:, 2:end])
+    foreach(ax -> ax.xlabel = "time (days)", axes[end, :])
+    linkyaxes!(axes...)
+    foreach(j -> linkxaxes!(axes[:, j]...), 1:ncols)
     return fig
+end
+
+# The label of a profile line: the time of the profile, or a given label (a run's name)
+line_label(::Nothing, p, nt) = "$(round(p.t[nt]; digits = 2)) d"
+line_label(label, p, nt) = label
+
+"""
+    profile!(ax, p, name; ns = (first, last), zmax = 16000, label = nothing)
+    profile!(f, ax, p, name; ...)
+
+Draw the horizontal-mean profile of variable `name` (a string, as in `read_profiles`) at the hourly
+means `ns` (indices, or `first`/`last`) into the Axis `ax` as lines, in display units, or f of them.
+Lines are labelled by their time, or by `label`. Returns `ax`.
+"""
+function profile!(f::Function, ax, p::NamedTuple, name; ns = (first, last), zmax = 16_000, label = nothing)
+    name = string(name)
+    A = getproperty(p, Symbol(name))
+    z = vertical_coordinate(p, A)
+    below = z .<= zmax
+    scale, units = display_units(name, get(profile_units, name, ""))
+    for n in ns
+        nt = time_index(n, length(p.t))
+        lines!(ax, apply_finite(f, scale .* A[below, nt]), z[below] ./ 1e3; label = line_label(label, p, nt))
+    end
+    ylims!(ax, 0, zmax / 1e3)
+    return ax
+end
+
+profile!(ax, p::NamedTuple, name; kw...) = profile!(identity, ax, p, name; kw...)
+
+# A row of axes, one per variable, labelled in display units; y axis on the first only
+function profile_axes(fig, f::Function, p, names)
+    axes = [Axis(fig[1, j]; xlabel = profile_label(panel_function(f, name), p, name),
+                 ylabel = j == 1 ? "z (km)" : "", xticks = WilkinsonTicks(3)) for (j, name) in enumerate(names)]
+    foreach(ax -> hideydecorations!(ax; grid = false), axes[2:end])
+    return axes
 end
 
 """
     plot_profiles(rundir; ns = (first, last), zmax = 16000, prefix = "monsoon_convection")
     plot_profiles(f, rundir; ...)
 
-Horizontal-mean θ, qᵛ, cloud condensate, u and v at the hourly means `ns` (indices, or `first`/`last`).
-`f` (e.g. log10) applies to the qᵛ and condensate panels, in g/kg.
+Horizontal-mean θ, qᵛ, cloud condensate (qc: cloud liquid + ice), u and v at the hourly means `ns`
+(indices, or `first`/`last`). `f` (e.g. log10) applies to the qᵛ and condensate panels, in g/kg.
 """
 plot_profiles(rundir; kw...) = plot_profiles(identity, rundir; kw...)
 
 function plot_profiles(f::Function, rundir; ns = (first, last), zmax = 16_000, prefix = "monsoon_convection")
     p = read_profiles(rundir; prefix)
-    Nt = length(p.t)
+    names = ["theta", "qv", "qc", "u", "v"]
     fig = Figure(size = (1500, 600))
-    panels = [("θ (K)", p.theta),
-              (labelled(f, "qᵛ", "g/kg"), apply_finite(f, 1e3 .* p.qv)),
-              (labelled(f, "cloud liquid + ice", "g/kg"), apply_finite(f, 1e3 .* (p.qcl .+ condensates(p)[2][2]))),
-              ("u (m/s)", p.u), ("v (m/s)", p.v)]
-    below = p.z .<= zmax
-    for (j, (label, A)) in enumerate(panels)
-        ax = Axis(fig[1, j]; xlabel = label, ylabel = j == 1 ? "z (km)" : "", limits = (nothing, (0, zmax / 1e3)),
-                  xticks = WilkinsonTicks(3))
-        j > 1 && hideydecorations!(ax; grid = false)
-        for n in ns
-            nt = time_index(n, Nt)
-            lines!(ax, A[below, nt], p.z[below] ./ 1e3; label = "$(round(p.t[nt]; digits = 2)) d")
-        end
+    axes = profile_axes(fig, f, p, names)
+    for (ax, name) in zip(axes, names)
+        profile!(panel_function(f, name), ax, p, name; ns, zmax)
     end
-    Legend(fig[1, length(panels) + 1], content(fig[1, 1]))
+    Legend(fig[1, length(names) + 1], content(fig[1, 1]))
     return fig
 end
+
+"""
+    compare_profiles(runs, names; labels, n = last, zmax = 16000, prefix = "monsoon_convection")
+    compare_profiles(f, runs, names; ...)
+
+Horizontal-mean profiles of the variables `names` (strings, one panel each) at time index `n` (an
+index, or `first`/`last`) of each of `runs` (run directories, or profiles from `read_profiles`), one
+line per run, labelled by `labels` (default the directory names). `f` (e.g. log10) applies to the
+mass-fraction variables only.
+
+    fig = compare_profiles(rundirs, ["theta", "qv", "qr"])
+"""
+compare_profiles(runs, names; kw...) = compare_profiles(identity, runs, names; kw...)
+
+compare_profiles(f::Function, rundirs::AbstractVector{<:AbstractString}, names;
+                 labels = basename.(rundirs), prefix = "monsoon_convection", kw...) =
+    compare_profiles(f, [read_profiles(d; prefix) for d in rundirs], names; labels, kw...)
+
+function compare_profiles(f::Function, ps::AbstractVector{<:NamedTuple}, names; labels = string.(eachindex(ps)),
+                          n = last, zmax = 16_000)
+    names = string.(names)
+    fig = Figure(size = (250 * length(names) + 250, 600))
+    axes = profile_axes(fig, f, ps[1], names)
+    for (ax, name) in zip(axes, names), (p, label) in zip(ps, labels)
+        profile!(panel_function(f, name), ax, p, name; ns = (n,), zmax, label)
+    end
+    Legend(fig[1, length(names) + 1], content(fig[1, 1]))
+    return fig
+end
+
+#####
+##### x–z and x–y sections
+#####
+
+"""
+    xz!(ax, s; j = 1, zmax = 16000, colormap, colorrange)
+    xz!(f, ax, s; ...)
+
+Draw the x–z section at y index `j` of snapshot `s` (from `read_snapshot` or `checkpoint_snapshot`) into
+the Axis `ax`, with title and axis labels, and return the heatmap. With `f` (e.g. log10), f of the
+variable. `colormap` and `colorrange` default to a scale from the data; give the same `colorrange` to
+compare panels. The `Colorbar` is the caller's.
+"""
+function xz!(f::Function, ax, s::NamedTuple; j = 1, zmax = 16_000,
+             colormap = Makie.automatic, colorrange = Makie.automatic)
+    scale, units = display_units(s.name, s.units)
+    A = apply_finite(f, scale .* s.data[:, j, :])
+    default_map, default_range = color_scale(f, s.name, A[:, s.z .<= zmax])
+    ax.title = "$(labelled(f, s.name, units)), y = $(round(s.y[j] / 1e3; digits = 1)) km, t = $(round(s.t; digits = 3)) d"
+    ax.xlabel = "x (km)"
+    ax.ylabel = "z (km)"
+    ylims!(ax, 0, zmax / 1e3)
+    return heatmap!(ax, s.x ./ 1e3, s.z ./ 1e3, A;
+                    colormap = or_default(colormap, default_map), colorrange = or_default(colorrange, default_range))
+end
+
+xz!(ax, s::NamedTuple; kw...) = xz!(identity, ax, s; kw...)
+
+"""
+    xy!(ax, s; z = 0, colormap, colorrange)
+    xy!(f, ax, s; ...)
+
+Draw the x–y map at the level nearest height `z` (m) of snapshot `s` into the Axis `ax`, with title and
+axis labels, and return the heatmap. With `f` (e.g. log10), f of the variable. `colormap` and
+`colorrange` default to a scale from the data. The `Colorbar` is the caller's.
+"""
+function xy!(f::Function, ax, s::NamedTuple; z = 0, colormap = Makie.automatic, colorrange = Makie.automatic)
+    k = argmin(abs.(s.z .- z))
+    scale, units = display_units(s.name, s.units)
+    A = apply_finite(f, scale .* s.data[:, :, k])
+    default_map, default_range = color_scale(f, s.name, A)
+    ax.title = "$(labelled(f, s.name, units)), z = $(round(Int, s.z[k])) m, t = $(round(s.t; digits = 3)) d"
+    ax.xlabel = "x (km)"
+    ax.ylabel = "y (km)"
+    ax.aspect = DataAspect()
+    return heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, A;
+                    colormap = or_default(colormap, default_map), colorrange = or_default(colorrange, default_range))
+end
+
+xy!(ax, s::NamedTuple; kw...) = xy!(identity, ax, s; kw...)
 
 """
     plot_xz(s; j = 1, zmax = 16000)
@@ -299,15 +526,8 @@ variable `name` at time index `n` of `_fields.nc`. With `f` (e.g. log10), of f o
 plot_xz(s::NamedTuple; kw...) = plot_xz(identity, s; kw...)
 
 function plot_xz(f::Function, s::NamedTuple; j = 1, zmax = 16_000)
-    scale, units = display_units(s.name, s.units)
-    A = apply_finite(f, scale .* s.data[:, j, :])
-    below = s.z .<= zmax
-    colormap, colorrange = color_scale(f, s.name, A[:, below])
     fig = Figure(size = (1000, 450))
-    ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "z (km)", limits = (nothing, (0, zmax / 1e3)),
-              title = "$(labelled(f, s.name, units)), y = $(round(s.y[j] / 1e3; digits = 1)) km, t = $(round(s.t; digits = 3)) d")
-    hm = heatmap!(ax, s.x ./ 1e3, s.z ./ 1e3, A; colormap, colorrange)
-    Colorbar(fig[1, 2], hm)
+    Colorbar(fig[1, 2], xz!(f, Axis(fig[1, 1]), s; j, zmax))
     return fig
 end
 
@@ -329,15 +549,8 @@ index `n` of `_surface.nc` (lowest level, hourly) or, with `kind = "fields"`, `_
 plot_xy(s::NamedTuple; kw...) = plot_xy(identity, s; kw...)
 
 function plot_xy(f::Function, s::NamedTuple; z = 0)
-    k = argmin(abs.(s.z .- z))
-    scale, units = display_units(s.name, s.units)
-    A = apply_finite(f, scale .* s.data[:, :, k])
-    colormap, colorrange = color_scale(f, s.name, A)
     fig = Figure(size = (1000, 550))
-    ax = Axis(fig[1, 1]; xlabel = "x (km)", ylabel = "y (km)", aspect = DataAspect(),
-              title = "$(labelled(f, s.name, units)), z = $(round(Int, s.z[k])) m, t = $(round(s.t; digits = 3)) d")
-    hm = heatmap!(ax, s.x ./ 1e3, s.y ./ 1e3, A; colormap, colorrange)
-    Colorbar(fig[1, 2], hm)
+    Colorbar(fig[1, 2], xy!(f, Axis(fig[1, 1]), s; z))
     return fig
 end
 

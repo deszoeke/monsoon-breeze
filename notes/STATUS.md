@@ -112,9 +112,13 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   `plot_xz`, `plot_xy`, `animate_surface` (hourly lowest level; 3D output is daily).
   `plot_*(f, ...)` plots a function of the variable, e.g. `log10`; `plot_axes(fig)` returns the
   axes for `xlims!`/`ylims!`. Font size 20 (`set_theme!`).
-- P3 output (2026-10-30): `condensates(p)` picks the four condensate panels from the file:
+- P3 output (2026-10-30): `condensate_names(p)` picks the four condensate panels from the file:
   one-moment cloud liquid, cloud ice, rain, snow; P3 cloud liquid, total ice `qi`, rain, rime `qf`.
   `plot_time_height` and `plot_profiles` use it. `qwi` and the numbers are not plotted yet.
+- Composable plots (2026-10-30): `plotter.jl` has building blocks that draw into an `Axis` and return
+  the heatmap (`time_height!`, `profile!`, `xz!`, `xy!`), and figures made of them, including
+  `compare_time_height(rundirs, names)` and `compare_profiles(rundirs, names)` (runs in columns,
+  variables in rows, shared color scale per row). Used in `plots/plot_profs.ipynb`.
 - Two notebooks: `plots/plot_profs.ipynb` (profile data only: time–height, wind, profiles, P3
   branches) and `plots/plots.ipynb` (surface, 3D, checkpoint).
 - On the Mac: `plots/fetch_profiles.sh [run ...]` rsyncs the small `_profiles.nc` (~300 KB) from
