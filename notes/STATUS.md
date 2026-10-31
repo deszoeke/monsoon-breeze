@@ -97,34 +97,28 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
 
 ## Plotting (2026-10-28, updated 2026-10-30)
 
-- Everything is in `plots/`: `plotter.jl` (functions that read a run directory and return
-  CairoMakie figures; including it only defines them), `plots.ipynb`, and its own environment
-  (`plots/Project.toml`: CairoMakie, NCDatasets, JLD2, Revise, IJulia; no Breeze),
+- Everything is in `plots/`: `plotter.jl` (readers and a few helpers; including it only defines
+  them), `plot_profs.ipynb`, `plots.ipynb`, and its own environment (`plots/Project.toml`:
+  CairoMakie, NCDatasets, JLD2, Revise, IJulia; no Breeze),
   `julia --project=plots -e 'using Pkg; Pkg.instantiate()'` once per machine.
-- Notebook (run on the cluster, where the output is): `Pkg.activate`, `using Revise;
-  includet("plotter.jl")`. No display: `julia --project=plots -e 'include("plots/plotter.jl");
-  save_plots("run/ekamsat-ctl0")'` writes PNGs to `<run>/plots`.
+- Design (2026-10-30): the readers return plain arrays and the notebooks compute with them
+  (`1e3 .* q`, `log10.`, `mean(A; dims = 2)`, anomalies) and plot with `Figure`, `Axis`, `heatmap!`/`lines!`,
+  `Colorbar`. The earlier `plot_*(f, rundir, ...)`, `compare_*`, `plot_axes` and `save_plots` were removed:
+  they hid the arrays (an elementwise `f` could not take a mean along a dimension).
 - Readers: `read_profiles` (hourly-mean profiles, (z, time)), `read_snapshot` (`_fields.nc` 3D or
-  `_surface.nc` lowest level), `read_checkpoint` + `checkpoint_snapshot` (latest state; ρᵣ(z)
-  estimated as ⟨ρθ⟩/⟨θ⟩ since the checkpoint has no grid or ρᵣ).
-- Plots: `plot_time_height` (T, qᵛ changes; cloud liquid, cloud ice, rain, snow in separate panels
-  with the 0 °C level; radiative flux divergence), `plot_wind_time_height`, `plot_profiles`,
-  `plot_xz`, `plot_xy`, `animate_surface` (hourly lowest level; 3D output is daily).
-  `plot_*(f, ...)` plots a function of the variable, e.g. `log10`; `plot_axes(fig)` returns the
-  axes for `xlims!`/`ylims!`. Font size 20 (`set_theme!`).
-- P3 output (2026-10-30): `condensate_names(p)` picks the four condensate panels from the file:
-  one-moment cloud liquid, cloud ice, rain, snow; P3 cloud liquid, total ice `qi`, rain, rime `qf`.
-  `plot_time_height` and `plot_profiles` use it. `qwi` and the numbers are not plotted yet.
-- Composable plots (2026-10-30): `plotter.jl` has building blocks that draw into an `Axis` and return
-  the heatmap (`time_height!`, `profile!`, `xz!`, `xy!`), and figures made of them, including
-  `compare_time_height(rundirs, names)` and `compare_profiles(rundirs, names)` (runs in columns,
-  variables in rows, shared color scale per row). Used in `plots/plot_profs.ipynb`.
+  `_surface.nc` lowest level; one time or several), `open_output` (a bare `NCDataset`),
+  `read_checkpoint` + `checkpoint_snapshot` (latest state; ρᵣ(z) estimated as ⟨ρθ⟩/⟨θ⟩ since the
+  checkpoint has no grid or ρᵣ). Helpers: `blank`, `symmetric_range`, `finite_range`;
+  `animate_surface(file, x, y, t, A)`. Units stay as in the file (kg/kg, m, days); convert in the notebook.
+- Notebook cells define small panel helpers (`th_panel!`) and loop over panels; the P3 runs are compared
+  in columns with a shared color scale per row, and as differences from ctl2.
+- `qwi` and the P3 number concentrations are not plotted yet.
 - Two notebooks: `plots/plot_profs.ipynb` (profile data only: time–height, wind, profiles, P3
   branches) and `plots/plots.ipynb` (surface, 3D, checkpoint).
 - On the Mac: `plots/fetch_profiles.sh [run ...]` rsyncs the small `_profiles.nc` (~300 KB) from
   the cluster into the local `run/<name>/` (default: the P3 tree). Read-only, safe while runs write;
   output stays git-ignored.
-- **P3 branches, first look** (`plot_time_height`, 2.04 to ~4 d, changes since 2.04 d; numbers read off
+- **P3 branches, first look** (time–height sections, 2.04 to ~4 d, changes since 2.04 d; numbers read off
   the plots; `p3_summary` in `plots/plot_profs.ipynb` computes them (max Δqᵛ and its height, ΔT, ice, rime/ice
   at 10–12 km, rain top), run it to replace these):
   - ctl2: qᵛ +0.7 g/kg at 4–8 km, slight drying below 2 km; T +0.5 K at 0–6 km, a cool band at 7–8 km.

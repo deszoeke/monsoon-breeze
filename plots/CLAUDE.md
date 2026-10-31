@@ -38,26 +38,25 @@ here for plot iteration; the repository's main session handles the model, runs a
 
 ## Conventions in plotter.jl
 
-- Functions read a run directory and return a Makie `Figure`; including the file only defines
-  them. `save_plots(rundir)` writes PNGs for the cluster (no display). CairoMakie, theme
-  `fontsize = 20`.
-- Two layers. Building blocks draw into an `Axis` and return the heatmap: `time_height!(ax, p, name)`,
-  `profile!`, `xz!`, `xy!` (title and labels set; the `Colorbar` and layout are the caller's).
-  `plot_*` functions make a Figure from them; `compare_time_height` and `compare_profiles` put
-  runs in columns and variables in rows with a shared color scale per row. New plots: write the
-  `!` block first, then the figure function. Notebooks compose figures from the blocks:
-  `fig = Figure(); ax = Axis(fig[1, 1]); hm = time_height!(ax, p, "qv"); Colorbar(fig[1, 2], hm)`.
-- Variable names in profile plots are the file's strings ("qv", "qi", "w_rms", "qc").
-- Display units: mass fractions in g/kg (`display_units`), heights in km, times in days.
-- Functions of variables: every plot function has a method with `f` first, `plot_xz(f, rundir, name)`,
-  applied elementwise to values in display units (`apply_finite`; non-finite → blank). In
-  multi-panel plots `f` applies only to the mass-fraction panels (not anomalies, radiation, wind).
-  Plain calls forward to `f = identity`.
+- `plotter.jl` holds readers and a few helpers, not plot functions. Readers return plain arrays
+  with their coordinates (`read_profiles`, `read_snapshot`, `read_checkpoint` + `checkpoint_snapshot`,
+  `open_output` for a bare `NCDataset`), in the file's units (kg/kg, m, days). The user computes
+  with the arrays (`1e3 .*`, `log10.`, `mean(A; dims = 2)`, anomalies) in the notebook; never hide that
+  behind a plotting function or an `f` argument.
+- Plots are written in the notebook with the Makie pattern: `Figure`, `Axis`, `heatmap!`/`lines!`,
+  `Colorbar`, in loops over panels, so the user can see and change every step. A small helper
+  function defined in a notebook cell (e.g. `th_panel!`) is fine; a library plot function only when
+  it has real logic (`animate_surface`).
+- Helpers in `plotter.jl`: `blank` (non-finite → NaN), `symmetric_range`, `finite_range`, `time_index`.
+  CairoMakie, theme `fontsize = 20`.
+- Display units are chosen in the notebook: mass fractions in g/kg (`1e3 .*`), heights in km
+  (`z ./ 1e3`), times in days (already).
+- Heatmaps want `(x, y)` order: profile arrays are `(z, time)`, so plot `A'` against `t`, `z ./ 1e3`.
 - Behaviour by dispatch on argument types, with real keyword defaults; never branch on keyword
-  values (`isnothing(kw) ? … : …`). See `time_index`, `labelled`, `color_scale`.
-- Time indices: an integer or a function of the indices (`first`, `last`).
-- Every function has a docstring with its signatures; keep them current. Match the comment density
-  and naming of the file; small targeted edits that keep the user's changes.
+  values (`isnothing(kw) ? … : …`). See `time_index`.
+- Time indices: an integer, a function of the indices (`first`, `last`), a range or `:`.
+- Every function in `plotter.jl` has a docstring with its signatures; keep them current. Match the
+  comment density and naming of the file; small targeted edits that keep the user's changes.
 
 ## Notebook
 
@@ -66,9 +65,9 @@ here for plot iteration; the repository's main session handles the model, runs a
   Put a new plot in the one whose files it reads.
 - The notebooks hold embedded images (several MB): never Read or grep their JSON. Use
   `python3 ~/.claude/skills/notebooks/nb.py` (`outline`, `cat`, `set`, `insert`, `edit`).
-- First cell: `Pkg.activate`, `using Revise; includet("plotter.jl")`, `rundir`. Figures are kept in
-  variables (`fig = plot_...`) so later cells can zoom (`plot_axes(fig)[i]`, `xlims!`, `ylims!`) or
-  restyle (`hm = ax.scene.plots[1]; hm.colorrange = (lo, hi)`; lo < hi).
+- First cell: `Pkg.activate`, `using Revise; includet("plotter.jl")`, `rundir`. Figures, axes
+  and heatmaps are kept in variables (`fig`, `ax`, `axs`, `hm`) so later cells can zoom (`xlims!`,
+  `ylims!`, `limits!`) or restyle (`hm.colorrange = (lo, hi)`; lo < hi).
 - The user reruns cells and looks at the plots; don't rerun to verify unless asked.
 
 ## Environment
