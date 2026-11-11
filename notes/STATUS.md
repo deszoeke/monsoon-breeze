@@ -99,7 +99,7 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
 
 - Everything is in `plots/`: `plotter.jl` (readers and a few helpers; including it only defines
   them), `plot_profs.ipynb`, `plots.ipynb`, and its own environment (`plots/Project.toml`:
-  CairoMakie, NCDatasets, JLD2, Revise, IJulia; no Breeze),
+  CairoMakie, PythonPlot, NCDatasets, JLD2, Revise, IJulia; no Breeze),
   `julia --project=plots -e 'using Pkg; Pkg.instantiate()'` once per machine.
 - Design (2026-10-30): the readers return plain arrays and the notebooks compute with them
   (`1e3 .* q`, `log10.`, `mean(A; dims = 2)`, anomalies) and plot with `Figure`, `Axis`, `heatmap!`/`lines!`,
@@ -132,6 +132,18 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
 - Used on the one-moment ctl0 (cluster notebook). Snow ~0.04 g/kg above 8 km: units checked (mass fraction
   ρqˢⁿ/ρᵣ, kg/kg moist air, plotted in g/kg); not a #1124 issue (that PR is θˡⁱ thermodynamics).
   Open: compare snow with cloud ice, and check for rain well above 0 °C.
+- **CM1 diagnostics ported (2026-11-11, untested on real output)** from `../cm1-out` (PyPlot, CM1 NetCDF),
+  plotted with PythonPlot in `plots/diag.ipynb`; computations in `plots/diag.jl`, thermodynamics in
+  `plots/thermo.jl` (`qs`, `Nsq_moist_add`, hydrostatic pressure; from cm1-out `Thermo.jl`, no Breeze).
+  `plotter.jl` was split: `readers.jl` has the readers and helpers without CairoMakie, so `diag.jl`
+  (PythonPlot) and `plotter.jl` (CairoMakie) can each include it. `plots/Project.toml` gains PythonPlot.
+  - Cells: lowest-level maps of θ, qv, u, v (the lowest grid level stands in for CM1's u10/v10, which Breeze
+    does not output); resolved ⟨w′qₜ′⟩ and ⟨w′θ′⟩ profiles from `_fields.nc` (`resolved_flux`); θ–qv joint
+    PDF from `_surface.nc`; time–height qv, qcl, θ; moist N² and Ri (`moist_stability`, pressure
+    hydrostatic from 1015 hPa because the files hold none; N² uses θˡⁱ).
+  - Gaps: no subgrid flux, no surface-flux outputs (u*, kinematic qv and θ fluxes), so the CM1 u*–q*, u*–θ*
+    PDFs are not ported. Adding those outputs is a MonsoonConvection edit (recompile; do it as one batch).
+  - cm1-out has no CAPE, cold-pool, mass-flux or budget code; "coldpools" there is a lowest-level map.
 - **Separate plotting session.** Plot iteration (color scales, axes, log scales, new panels) runs
   in its own Claude session, started in `plots/` (`claude --model sonnet`), with instructions in
   `plots/CLAUDE.md` (scope, data, conventions, notebook editing with `nb.py`). It owns `plots/`.
