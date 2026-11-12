@@ -28,11 +28,13 @@ HPC (GPU), once, **in this order** (details and the GPU check: [Setup on the HPC
 git clone git@github.com:deszoeke/monsoon-breeze.git /ceoas/deszoeks/projects/monsoon-breeze && cd /ceoas/deszoeks/projects/monsoon-breeze
 echo 'source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh' >> ~/.bashrc    # Julia, depot, CPU target, Slurm per architecture
 source helpers/arch_env.sh
-# download the packages: once per architecture, on a node of that architecture
-JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'     # x86_64: here, on the login node
-sbatch -p ceoas-arm instantiate_job.sh                                            # aarch64 (GH200): a batch job, log below
-sbatch -p ceoas precompile_job.sh             # x86_64 (A100 nodes), ≈ 5 min; the log ends "Load check: ok"
-sbatch -p ceoas-arm precompile_job.sh         # aarch64 (GH200 nodes): once per architecture you will run on
+# then, for each architecture you will run on (skip the one you won't use):
+# x86_64 (A100 nodes): download the packages here on the login node, then precompile (≈ 5 min; the log ends "Load check: ok")
+JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
+sbatch -p ceoas precompile_job.sh
+# aarch64 (GH200 nodes): the same two steps as batch jobs on an aarch64 node (wait for the first to finish; log below)
+sbatch -p ceoas-arm instantiate_job.sh
+sbatch -p ceoas-arm precompile_job.sh
 ```
 
 Then each experiment, from the repository directory on the login node:
