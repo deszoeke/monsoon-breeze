@@ -151,23 +151,30 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   (repository root), which sends lookups to `code-reader`. The user routes between them; the
   sessions share only files and git, so pull and re-read before editing.
 
-## Flux outputs (2026-11-11; compiled and run: not yet)
+## Flux outputs (2026-11-11; compiled and run on sundog CPU small test 2026-11-12)
 
-- **`_profiles.nc`** (`d0e3242`): resolved fluxes `uw`, `vw`, `wtheta`, `wqv` (⟨w′a′⟩, (z, time), hourly
+- **`_profiles.nc`** (`d0e3242`): resolved fluxes `wu`, `wv`, `wtheta`, `wqv` (⟨w′a′⟩, (z, time), hourly
   means of the instantaneous flux). Deviations are about the instantaneous horizontal mean, in two
   passes (`deviation(a) = a - Field(Average(a, dims=(1, 2)))`), because ⟨aw⟩ - ⟨a⟩⟨w⟩ cancels badly for
   θ ≈ 300 K, θ′ ≈ 0.1 K. w and a are interpolated to cell centers with `@at`. No subgrid flux.
   Tested only as a pattern, on plain Oceananigans CPU fields (0.114, scratch env): θ flux matches an
   offline calculation to 4e-10 (Float32), and the mean fields refresh when the fields change. u needs its
   halos filled, as the model's are after each step.
-- **`_surface.nc`** (`a14a3a0`): `uw_sfc`, `vw_sfc`, `wtheta_sfc`, `wqv_sfc`, the bulk surface fluxes
+- **`_surface.nc`** (`a14a3a0`): `wu_sfc`, `wv_sfc`, `wtheta_sfc`, `wqv_sfc`, the bulk surface fluxes
   (upward-positive, kinematic). Breeze never stores them (the bulk boundary conditions are evaluated
   inline in the tendency kernels), so `BoundaryConditionOperation(ρa, :bottom, model)` evaluates the
-  same condition and a `KernelFunctionOperation` divides by the lowest-level density. u* = (uw² + vw²)^¼
+  same condition and a `KernelFunctionOperation` divides by the lowest-level density. u* = (wu² + wv²)^¼
   at cell centers, computed offline.
 - **Check on the first run** (CPU small test, then GPU): `wtheta_sfc` against the lowest level of `wtheta`;
-  signs (a warm sea gives positive `wtheta_sfc`, `wqv_sfc`; drag gives `uw_sfc` opposite the wind);
-  that `ρ[i, j, 1]` indexing of the reduced density works; and that `uw_sfc` at the faces is written.
+  signs (a warm sea gives positive `wtheta_sfc`, `wqv_sfc`; drag gives `wu_sfc` opposite the wind);
+  that `ρ[i, j, 1]` indexing of the reduced density works; and that `wu_sfc` at the faces is written.
+- **Small test result (sundog CPU, 1 h; file times 0 and 3600 s):** compiles and runs, all flux variables are
+  in the files. The first record (t = 0) is exactly zero for every flux, `w` and `w2` (w = 0 initially), so
+  ignore it. At 1 h the signs are as expected: `wu_sfc` ≈ -0.013 m²/s² (opposite the wind), `wv_sfc` ≈ 0.003,
+  `wtheta_sfc` ≈ 2.7e-3 K m/s, `wqv_sfc` ≈ 2.7e-5 kg/kg m/s (≈ 80 W/m² latent). The resolved `wtheta` at
+  the lowest level (7e-5) is much smaller than `wtheta_sfc`: at 1 h the resolved w is ~1e-8 m/s and the
+  closure carries the flux, so the two agree only once resolved turbulence is spun up (and the total flux
+  is resolved + subgrid). Not yet compared in a long run.
 - Both are package edits: recompile (below). CM1 comparisons: `plots/diag.jl` (`resolved_flux`).
 - **Compile on sundog** (WSL, 32 cores, 31 GB, RTX A2000; Julia 1.13.1; no Manifest or Breeze in the depot
   yet): `julia --project -e 'using Pkg; Pkg.instantiate()'`, then `julia --project setup_precompile.jl`,
