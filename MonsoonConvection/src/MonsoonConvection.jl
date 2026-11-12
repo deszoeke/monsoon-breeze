@@ -28,7 +28,9 @@ using Oceananigans.TurbulenceClosures: closure_required_tracers
 using Oceananigans.AbstractOperations: KernelFunctionOperation, @at
 using Oceananigans.Advection: cell_advection_timescale
 using Oceananigans.Operators: Δzᶜᶜᶠ
-using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names
+using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names,
+                               dynamics_density, thermodynamic_density
+using Oceananigans.Models: BoundaryConditionOperation
 
 using NCDatasets  # required for RRTMGP lookup tables
 using RRTMGP
@@ -454,7 +456,11 @@ function netcdf_attributes(name::Symbol)
                  :uw    => ("resolved vertical flux of eastward momentum <u'w'>", "m2 s-2"),
                  :vw    => ("resolved vertical flux of northward momentum <v'w'>", "m2 s-2"),
                  :wtheta => ("resolved vertical flux of liquid-ice potential temperature <w'theta'>", "K m s-1"),
-                 :wqv   => ("resolved vertical flux of water vapor <w'qv'>", "kg kg-1 m s-1"))
+                 :wqv   => ("resolved vertical flux of water vapor <w'qv'>", "kg kg-1 m s-1"),
+                 :uw_sfc => ("surface (bulk) flux of eastward momentum, upward <w'u'>", "m2 s-2"),
+                 :vw_sfc => ("surface (bulk) flux of northward momentum, upward <w'v'>", "m2 s-2"),
+                 :wtheta_sfc => ("surface (bulk) flux of liquid-ice potential temperature, upward <w'theta'>", "K m s-1"),
+                 :wqv_sfc => ("surface (bulk) flux of water vapor, upward <w'qv'>", "kg kg-1 m s-1"))
     haskey(known, name) && return Dict("long_name" => known[name][1], "units" => known[name][2])
 
     str = string(name)
@@ -475,6 +481,24 @@ function microphysics_outputs(model)
 end
 
 ascii_outputs(outputs) = NamedTuple(netcdf_name(name) => outputs[name] for name in keys(outputs))
+
+# The surface fluxes are the bulk boundary conditions (BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux),
+# which Breeze evaluates inline in the tendency kernels and never stores. `BoundaryConditionOperation`
+# evaluates the same boundary condition on demand, in the ρ-weighted units of the prognostic field
+# (ρu: kg m-1 s-2, ρθ: K kg m-2 s-1, ρqᵛ: kg m-2 s-1). Dividing by the lowest-level density gives
+# kinematic fluxes comparable with the profiles' ⟨w′a′⟩ (upward-positive, as the boundary condition
+# value is the tendency of the lowest cell times Δz). u* follows offline: (uw² + vw²)^(1/4) at centers.
+@inline kinematic_surface_flux(i, j, k, grid, J, ρ) = @inbounds J[i, j, 1] / ρ[i, j, 1]
+
+function surface_fluxes(model)
+    ρ = dynamics_density(model.dynamics)
+    kinematic(LX, LY, ρa) = KernelFunctionOperation{LX, LY, Center}(kinematic_surface_flux, model.grid,
+                                BoundaryConditionOperation(ρa, :bottom, model), ρ)
+    return ascii_outputs((; uw_sfc = kinematic(Face, Center, model.momentum.ρu),
+                            vw_sfc = kinematic(Center, Face, model.momentum.ρv),
+                            wθ_sfc = kinematic(Center, Center, thermodynamic_density(model.formulation)),
+                            wqᵛ_sfc = kinematic(Center, Center, model.moisture_density)))
+end
 
 #####
 ##### Sedimentation in the time-step limit
@@ -614,8 +638,10 @@ function build_simulation(model;
                      filename = prefix * "_profiles.nc",
                      schedule = AveragedTimeInterval(profiles_interval))
 
+    surface_outputs = merge(outputs, surface_fluxes(model))   # lowest level; (x, y, 1)
+
     simulation.output_writers[:surface] =
-        NetCDFWriter(model, outputs; netcdf_kw..., output_attributes = output_attributes(outputs),
+        NetCDFWriter(model, surface_outputs; netcdf_kw..., output_attributes = output_attributes(surface_outputs),
                      filename = prefix * "_surface.nc",
                      indices = (:, :, 1),
                      schedule = TimeInterval(surface_interval))
