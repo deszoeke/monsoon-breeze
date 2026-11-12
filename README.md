@@ -28,7 +28,9 @@ HPC (GPU), once, **in this order** (details and the GPU check: [Setup on the HPC
 git clone git@github.com:deszoeke/monsoon-breeze.git /ceoas/deszoeks/projects/monsoon-breeze && cd /ceoas/deszoeks/projects/monsoon-breeze
 echo 'source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh' >> ~/.bashrc    # Julia, depot, CPU target, Slurm per architecture
 source helpers/arch_env.sh
-JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'   # per architecture, on a node of it
+# download the packages: once per architecture, on a node of that architecture
+JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'     # x86_64: here, on the login node
+srun -p ceoas-arm -t 0:30:00 --mem=8G bash -lc 'cd /ceoas/deszoeks/projects/monsoon-breeze && source helpers/arch_env.sh && JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e "using Pkg; Pkg.instantiate()"'   # aarch64 (GH200): needs internet on the node
 sbatch -p ceoas precompile_job.sh             # x86_64 (A100 nodes), ≈ 5 min; the log ends "Load check: ok"
 sbatch -p ceoas-arm precompile_job.sh         # aarch64 (GH200 nodes): once per architecture you will run on
 ```
@@ -178,8 +180,15 @@ julia --version; echo "$JULIA_DEPOT_PATH  ${JULIA_CPU_TARGET:-native}  $(uname -
 JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Run the last command on a node of each architecture you will use: the x86_64 login node for x86_64, and an
-`srun -p ceoas-arm` session (with internet) for aarch64, since the packages go into that architecture's own depot.
+Run the instantiate **once on each architecture you will use** (x86_64: the login node, as above; one run covers
+`ceoas`, `ceoas-gpu` and the login node, which share `~/.julia`). **aarch64 needs its own run on an `ceoas-arm`
+node** (the packages go into `~/.julia-aarch64`; the login node cannot fill it):
+
+```sh
+srun -p ceoas-arm -t 0:30:00 --mem=8G bash -lc 'cd /ceoas/deszoeks/projects/monsoon-breeze && source helpers/arch_env.sh && JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e "using Pkg; Pkg.instantiate()"'
+```
+
+(The node needs internet; check with the `curl` line in step 1.)
 Do **not** export `JULIA_DEPOT_PATH` or `JULIA_CPU_TARGET` yourself: the shared `~/.bashrc` would apply them to
 both architectures (`haswell` is not a valid target on aarch64). A job that sees a different
 `JULIA_CPU_TARGET` than the one a cache was built with rejects it and recompiles at startup. Without a tracked
