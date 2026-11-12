@@ -95,6 +95,34 @@ option (`flux_outputs`) that builds none of the operations when false.
 (a column with a known K and gradient; a uniform-w check that the resolved flux is zero; the two-pass
 precision check; a closure-swap check; sedimentation against `bottom_precipitation_flux`), and a docs page.
 
+## A standard set of calls
+
+Diagnostics live outside the model: `AtmosphereModel` stores prognostic fields, velocities, closure fields,
+`microphysical_fields` and `sedimentation`, and diagnostics are functions of the model that return
+`KernelFunctionOperation`s (`AtmosphereModels/Diagnostics/`). The flux diagnostics need no new model state;
+they read `model.velocities`, `model.closure` and `model.closure_fields`, `model.sedimentation`,
+`model.momentum`, `model.moisture_density`, `thermodynamic_density(model.formulation)` and the bottom boundary
+conditions. They do rely on internals users should not have to track (the closure's scalar-index order,
+`specific_field_name`, `model.sedimentation`, which closures are diffusivity closures), so a standard set
+belongs in Breeze next to those internals, where it changes with them. Proposal, each returning a named tuple
+of operations or `Average`s that an output writer takes directly:
+
+```julia
+profile_outputs(model; fluxes = true)   # horizontal means: u v w θ T qᵛ, microphysics mass fractions and numbers
+vertical_flux_outputs(model)            # resolved wu wv wtheta wq*, subgrid F_*_sgs, sedimentation F_*_sed (z faces)
+surface_flux_outputs(model)             # F_u_sfc F_v_sfc F_theta_sfc F_qv_sfc, and F_*_sed at the bottom face
+output_attributes(outputs)              # long_name and units for every name, so files are self-describing
+```
+
+- Time averaging, intervals and the writer stay with the user (`AveragedTimeInterval`, `TimeInterval`).
+- The names and the long_name/units table are the shared convention, so profile files look alike across
+  experiments. In MonsoonConvection that table is `netcdf_attributes` and `flux_attributes`.
+- `fluxes = false` skips every flux operation (none built, evaluated or stored), as `flux_outputs` does here.
+- The microphysics species list comes from the scheme (`prognostic_field_names`, `model.sedimentation`), so
+  it follows one-moment or P3 automatically.
+- Whether this standard set is a function of the model or part of `AtmosphereModel` is for the maintainers
+  (issue #1250); the diagnostics pattern keeps it outside the model.
+
 ## Before proposing
 
 1. Run on GPU: the KFOs capture `Oceananigans.fields(model)` and the closure. Breeze notes (`BoundaryConditions.jl`,
