@@ -15,11 +15,21 @@ packages=("$@")
 # hash of every file under a src directory (paths and contents)
 src_hash() { (cd "$1" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum | shasum | cut -d' ' -f1); }
 
-# one Julia call for all package directories
-dirs=$(julia --project=. -e "for p in ARGS; println(pkgdir(Base.require(Main, Symbol(p)))); end" "${packages[@]}")
+# package directories: a sibling checkout ../<Package>.jl if there is one, else the installed package
+# (one Julia call for those)
+dirs=""
+missing=()
+for p in "${packages[@]}"; do
+    if [[ -d ../$p.jl/src ]]; then dirs+="$(cd ../$p.jl && pwd)"$'\n'; else missing+=("$p"); dirs+="@$p"$'\n'; fi
+done
+if (( ${#missing[@]} )); then
+    resolved=$(julia --project=. -e "for p in ARGS; println(pkgdir(Base.require(Main, Symbol(p)))); end" "${missing[@]}")
+    while read -r d; do dirs=${dirs/@*([^$'\n'])/$d}; done <<< "$resolved"
+fi
 
 i=0
 while read -r dir; do
+    [[ -n $dir ]] || continue
     pkg=${packages[$i]}; i=$((i + 1))
     out=graphify-$(echo "$pkg" | tr '[:upper:]' '[:lower:]')
     hash=$(src_hash "$dir/src")
@@ -30,6 +40,8 @@ while read -r dir; do
     rm -rf "$out"
     mkdir -p "$out"
     cp -R "$dir/src" "$out/src"
+    # graphify honors .gitignore, which ignores graphify-*/; an inner .graphifyignore overrides it
+    printf '# .gitignore ignores graphify-*/, but this copy is the source to graph\n!*\n' > "$out/.graphifyignore"
     graphify update "$out" 2>&1 | grep -v "skill at" | grep -v "^Tip:" || true
     echo "$hash" > "$out/SOURCE_HASH"
     echo "$dir" > "$out/SOURCE_DIR"
