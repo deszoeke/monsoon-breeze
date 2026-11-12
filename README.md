@@ -30,7 +30,7 @@ echo 'source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh' >> ~/.
 source helpers/arch_env.sh
 # download the packages: once per architecture, on a node of that architecture
 JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'     # x86_64: here, on the login node
-srun -p ceoas-arm -t 0:30:00 --mem=8G bash -lc 'cd /ceoas/deszoeks/projects/monsoon-breeze && source helpers/arch_env.sh && JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e "using Pkg; Pkg.instantiate()"'   # aarch64 (GH200): needs internet on the node
+sbatch -p ceoas-arm instantiate_job.sh                                            # aarch64 (GH200): a batch job, log below
 sbatch -p ceoas precompile_job.sh             # x86_64 (A100 nodes), ≈ 5 min; the log ends "Load check: ok"
 sbatch -p ceoas-arm precompile_job.sh         # aarch64 (GH200 nodes): once per architecture you will run on
 ```
@@ -185,10 +185,9 @@ Run the instantiate **once on each architecture you will use** (x86_64: the logi
 node** (the packages go into `~/.julia-aarch64`; the login node cannot fill it):
 
 ```sh
-srun -p ceoas-arm -t 0:30:00 --mem=8G bash -lc 'cd /ceoas/deszoeks/projects/monsoon-breeze && source helpers/arch_env.sh && JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e "using Pkg; Pkg.instantiate()"'
+sbatch -p ceoas-arm instantiate_job.sh      # needs internet on the node (check with the `curl` line in step 1)
+tail -f slurm-instantiate-<jobid>.out       # ends with "Instantiate done", or the error; squeue -u $USER shows it
 ```
-
-(The node needs internet; check with the `curl` line in step 1.)
 Do **not** export `JULIA_DEPOT_PATH` or `JULIA_CPU_TARGET` yourself: the shared `~/.bashrc` would apply them to
 both architectures (`haswell` is not a valid target on aarch64). A job that sees a different
 `JULIA_CPU_TARGET` than the one a cache was built with rejects it and recompiles at startup. Without a tracked
@@ -372,6 +371,7 @@ Failures met while setting up the cluster, with causes and fixes:
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
+| `instantiate_job.sh` | Slurm batch job that downloads the pinned packages (`Pkg.instantiate`) into the depot of the node's architecture; run once per architecture (`-p ceoas-arm` for aarch64). |
 | `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory; no GPU needed, but name a partition of the architecture to compile for (`-p ceoas` x86_64, `-p ceoas-arm` aarch64). |
 | `check_gpu.jl` | Staged check that a GPU node can run the model; `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs: `sbatch -p <partition> --gres=<gpu> monsoon_job.sh <run directory>`. |
