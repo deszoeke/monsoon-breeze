@@ -25,7 +25,7 @@ using Oceananigans.Grids: znodes, znode
 using Oceananigans.TimeSteppers: update_state!
 using Oceananigans.Architectures: on_architecture
 using Oceananigans.TurbulenceClosures: closure_required_tracers
-using Oceananigans.AbstractOperations: KernelFunctionOperation
+using Oceananigans.AbstractOperations: KernelFunctionOperation, @at
 using Oceananigans.Advection: cell_advection_timescale
 using Oceananigans.Operators: Δzᶜᶜᶠ
 using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names
@@ -450,7 +450,11 @@ function netcdf_attributes(name::Symbol)
                  :qv    => ("water vapor mass fraction (specific humidity)", "kg kg-1"),
                  :bf    => ("rime volume per mass of moist air", "m3 kg-1"),
                  :radiative_flux_divergence => ("radiative flux divergence (heating rate × ρ cp)", "W m-3"),
-                 :w2    => ("vertical velocity variance", "m2 s-2"))
+                 :w2    => ("vertical velocity variance", "m2 s-2"),
+                 :uw    => ("resolved vertical flux of eastward momentum <u'w'>", "m2 s-2"),
+                 :vw    => ("resolved vertical flux of northward momentum <v'w'>", "m2 s-2"),
+                 :wtheta => ("resolved vertical flux of liquid-ice potential temperature <w'theta'>", "K m s-1"),
+                 :wqv   => ("resolved vertical flux of water vapor <w'qv'>", "kg kg-1 m s-1"))
     haskey(known, name) && return Dict("long_name" => known[name][1], "units" => known[name][2])
 
     str = string(name)
@@ -585,8 +589,19 @@ function build_simulation(model;
     outputs = ascii_outputs(merge((; u, v, w, θ, T, qᵛ), microphysics_outputs(model)))
 
     profiles = NamedTuple(name => Average(outputs[name], dims=(1, 2)) for name in keys(outputs))
-    profiles = merge(profiles, (radiative_flux_divergence = Average(radiation.flux_divergence, dims=(1, 2)),
-                                w2 = Average(w^2, dims=(1, 2))))
+    # Resolved vertical fluxes ⟨a′w′⟩, a′ and w′ deviations from the instantaneous horizontal mean, in two
+    # passes: the mean Fields first, then the average of the product of deviations. ⟨aw⟩ - ⟨a⟩⟨w⟩ would
+    # lose digits to cancellation (θ ≈ 300 K, θ′ ≈ 0.1 K). The mean Fields are recomputed whenever the
+    # flux is evaluated. The deviations are at cell centers (u, v, w are interpolated there). The
+    # closure (subgrid) flux is not included.
+    deviation(a) = a - Field(Average(a, dims=(1, 2)))
+    w′ = deviation(w)
+    flux(a) = Average(@at((Center, Center, Center), deviation(a) * w′), dims=(1, 2))
+    fluxes = ascii_outputs((; uw = flux(u), vw = flux(v), wθ = flux(θ), wqᵛ = flux(qᵛ)))
+
+    profiles = merge(profiles, fluxes,
+                     (radiative_flux_divergence = Average(radiation.flux_divergence, dims=(1, 2)),
+                      w2 = Average(w^2, dims=(1, 2))))
 
     output_attributes(outs) = Dict(string(name) => netcdf_attributes(name) for name in keys(outs))
     global_attributes = Dict("title" => "CM1 monsoon-convection case (EKAMSAT) in Breeze.jl",
