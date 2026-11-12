@@ -123,6 +123,17 @@ output_attributes(outputs)              # long_name and units for every name, so
 - Whether this standard set is a function of the model or part of `AtmosphereModel` is for the maintainers
   (issue #1250); the diagnostics pattern keeps it outside the model.
 
+## Output architecture in MonsoonConvection (for discussion)
+
+`build_simulation(model; ...)` combines the model and the outputs: it builds the profile (horizontal-mean),
+surface (lowest-level) and 3D-field writers and a checkpointer from a hard-coded output set, configurable only
+by intervals. The flux diagnostics are members of the profiles and surface files, built from model fields
+outside the model. `flux_outputs` (a boolean) is a minimal hack that configures this output code (it switches
+those members off, building none of the operations); it is not a designed interface and is kept as a simple
+switch pending the developers' view. A cleaner design would be one outputs object or function holding the
+output selections, files and frequencies, passed to `build_simulation` (model and outputs stay separate, and
+combine there); the standard-set functions above would be its building blocks.
+
 ## Before proposing
 
 1. Run on GPU: the KFOs capture `Oceananigans.fields(model)` and the closure. Breeze notes (`BoundaryConditions.jl`,

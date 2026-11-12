@@ -188,8 +188,21 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
     (vapor, θ, momentum) and `F_<q>_sed` (precipitation).
 - **Upstream:** Breeze has no standard flux diagnostics (its examples average raw `w*θ` products). Breeze issue #1250 is open
   (2026-11-12); a guide for a Breeze.jl PR is in `issues/breeze_pr_vertical_flux_diagnostics.md`.
-- **Option** `flux_outputs` (driver setting, `build_simulation` keyword, default `true`): `false` builds none of
-  the flux operations, so they cost no compute or memory.
+- **Output architecture and the `flux_outputs` switch** (decision 2026-11-12). Present architecture: `build_model`
+  builds the model; `build_simulation(model; ...)` wraps it in a `Simulation` and creates all the output
+  writers (profiles: horizontal means of the output set; surface: its lowest level; fields: 3D; a checkpointer),
+  all in `MonsoonConvection.jl`. The standard output set is hard-coded there. The driver can change only the
+  intervals (`profiles_interval`, `surface_interval`, `fields_interval`, `checkpoint_interval`; it passes just
+  the last) and has no on/off or selection options. Outputs and diagnostics are outside the model: operations
+  built from model fields, no model state. `flux_outputs` (driver setting and `build_simulation` keyword,
+  default `true`) is therefore an *outputs* option: it configures code that adds fluxes as members of the existing
+  profiles and surface files (not new files), external to the model. `false` builds none of the flux
+  operations, so they cost no compute or memory. It is a minimal working hack, kept as a simple switch
+  pending discussion with the Breeze developers (#1250), not a designed interface. Rejected for now: listing
+  every output setting in the driver (verbose) and an output-selection list that treats fluxes as a group
+  (fluxes are members of the profiles and surface files, so that would mislead). Preferred direction: one
+  outputs object or function holding the output selections, files and frequencies the user configures,
+  passed to `build_simulation`, which combines the model and the outputs.
 - **Test of the drafted code** (sundog CPU small test, P3, 1 h, scratch dir): compiles and runs; all variables
   written on `z_aaf`. `F_u_sgs` at 50 m = -1.29e-2 vs `F_u_sfc` -1.28e-2; `F_v_sgs` +2.3e-3 vs +2.7e-3;
   `F_qv_sgs` 2.3e-5 vs 2.7e-5: sgs just above the surface matches the boundary-condition flux in sign and size
