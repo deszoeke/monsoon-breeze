@@ -4,227 +4,39 @@ EKAMSAT Arabian Sea monsoon convection in Breeze.jl, from an idealized sounding.
 as a translation of a CM1 (r21.1) case in `cm1/`; `notes/cm1_migration.md` maps the CM1 namelist to
 Breeze and records where the setups differ.
 
+**Contents:** [Quick start](#quick-start) · [Running the model](#running-the-model) ·
+[Setup on a laptop](#setup-on-a-laptop-cpu) · [Setup on the HPC](#setup-on-the-hpc-gpu-with-cuda-slurm-partition-ceoas-gpu) ·
+[Compiling](#compiling) · [New experiment](#writing-a-new-experiment) ·
+[Troubleshooting](#troubleshooting) · [Reference](#reference): [files](#files), [domain and resources](#model-domain-and-resources),
+[changes to Breeze defaults](#changes-to-breeze-defaults), [glossary](#glossary)
+
 ## Quick start
 
+Laptop (CPU), once, then a 1 h check (16 km × 8 km, ~3 min):
+
 ```sh
-# laptop (CPU), once:
 julia --project -e 'using Pkg; Pkg.instantiate()'
 julia --project setup_precompile.jl
-
-# quick check that everything runs (16 km × 8 km domain, 1 simulated hour, ~3 min):
 mkdir -p run/small_test && cp monsoon_convection.jl run/small_test/
 # in run/small_test/monsoon_convection.jl set  arch = :cpu  and  small_test = true, then
 cd run/small_test && julia --project=../.. monsoon_convection.jl
 ```
 
-## Files
+HPC (GPU), on the login node, once (see [Setup on the HPC](#setup-on-the-hpc-gpu-with-cuda-slurm-partition-ceoas-gpu)
+for `~/.bashrc`, the CPU target and the GPU check):
 
-| File | Purpose |
-|---|---|
-| `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
-| `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
-| `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
-| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory (the login node runs out); no GPU needed. |
-| `check_gpu.jl` | Staged check that a GPU node can run the model (CUDA, GPU context, model steps on the GPU); `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
-| `monsoon_job.sh` | Slurm batch script for GPU runs: `sbatch -p <partition> --gres=<gpu> monsoon_job.sh <run directory>`. |
-| `helpers/preflight.jl` | Flag parsing and the GPU check used by the scripts above before any package loads; not run directly. |
-| `helpers/pressure_solver_precision.jl` | Run-time override that gives the pressure solve its own precision (`pressure_solver_type`); a stopgap until Breeze offers this. |
-| `Project.toml` | Julia environment. Package versions are bounded by the compat entries in `MonsoonConvection/Project.toml`; each machine keeps its own untracked `Manifest.toml`. |
-| `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
-| `run/` | Local run directory for output and checkpoints (git-ignored; created by the scripts). |
-| `cm1/` | Original CM1 namelist, sounding and log. |
-
-## Model domain and resources
-
-| | Full run | `small_test = true` |
-|---|---|---|
-| Columns (Nx × Ny) | 1024 × 512 | 32 × 16 |
-| Horizontal extent | 512 km × 256 km, Δx = Δy = 500 m | 16 km × 8 km |
-| Vertical | 58 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, 500 m to 18 km, then stretching to ~1 km at the lid | same |
-| Grid cells | 30.4 million | 29,696 |
-| Boundaries | periodic in x and y; rigid lid with a sponge above 20 km | same |
-| Rotation | f-plane, f = 2.53 × 10⁻⁵ s⁻¹ (10°N) | same |
-| Simulated time | `stop_time` | 1 h |
-| Time step | adaptive, CFL 0.7, at most 15 s (≈ 8 s in the 1 h tests, before deep convection) | same |
-| Time steps | roughly 25,000–45,000 | ≈ 570 |
-
-**Memory.** The model plus simulation state takes about 111 3D arrays: about 444 bytes per grid
-cell including halos in Float32 (the GPU default), twice that in Float64. This was measured with `Base.summarysize` at 32×16 and 64×64 and
-extrapolated linearly:
-
-| Configuration | Model state |
-|---|---|
-| Full run, Float32 model + Float64 pressure solve (GPU default) | **≈ 15 GiB**, plus a few GB of Float64 pressure-solve arrays |
-| Full run, all Float64 | ≈ 30 GiB |
-| `small_test`, Float32 (measured) | ≈ 54 MiB |
-
-Allow headroom for the CUDA context and temporary arrays. In Float64 the full domain needs a GPU
-with **at least 24 GB** in the default mixed precision, or 48 GB all-Float64; the A100 80 GB is
-comfortable either way.
-
-These are estimates; check them with `nvidia-smi` during the first GPU run. Host memory needs
-are modest. Output is copied to the host before writing (≈ 2 GB per 3D snapshot), so 32–64 GB
-of host RAM is ample.
-
-**Disk** (estimates for the full run; one run directory per experiment):
-
-| File | Size |
-|---|---|
-| `_fields.nc`: 14 variables × 30.4 M cells × 4 B per daily snapshot, 5 snapshots | ≈ 2 GB each, ≈ 10 GB total |
-| `_surface.nc`: hourly, about 96 snapshots | ≈ 3 GB |
-| `_profiles.nc` | < 10 MB |
-| Checkpoint (JLD2, only the latest kept) | a few GB |
-
-**Wall-clock time.** GPU throughput for this configuration hasn't been measured yet. On a
-laptop CPU, the small test runs at about 0.27 s per step. Time a short full-size GPU run first
-(see "First GPU test" below) to choose the job's `--time`.
-
-## Changes to Breeze defaults
-
-`MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Items 1,
-2 and 4 are in `build_model`, item 5 in `build_simulation` (`MonsoonConvection/src/MonsoonConvection.jl`, "Model" section);
-item 3 is the driver's default precision. Keep them in mind when interpreting results or comparing
-with other Breeze runs.
-
-### 1. TKE closure: eddy diffusivities capped at 100 m² s⁻¹ (safeguard; physics change only when active)
-
-```julia
-closure = TKEBasedTurbulenceClosure(; maximum_viscosity = maximum_diffusivity,
-                                      maximum_tracer_diffusivity = maximum_diffusivity,
-                                      maximum_tke_diffusivity = maximum_diffusivity)   # default 100 m² s⁻¹
+```sh
+git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze && cd ~/monsoon-breeze
+JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
+sbatch precompile_job.sh                      # ≈ 5 min; the log ends "Load check: ok"
 ```
 
-- **Why.** Breeze's `TKEBasedTurbulenceClosure` (0.11.3) uses the mixing length
-  ℓ = min(z, Cᴺ √e / N). Where the stratification is neutral or unstable (N² ≤ 0), ℓ falls back
-  to z, the height above the ground. A locally unstable layer aloft therefore gets ℓ of order
-  10–20 km, and K = Sᵘ ℓ √e of order 10⁴–10⁵ m² s⁻¹. Breeze's default caps are infinite.
-- **What happened.** In the first full-domain GPU run, max Kᵘ jumped from ~40 to 3×10⁴ m² s⁻¹
-  at iteration ~215, and the run failed with NaN at iteration 257. This turned out to be a
-  **symptom** of the Float32 instability in item 3: the top cell became unstable and the closure
-  responded with ℓ = z. In Float64 the cap never engages (max Kᵘ ≲ 50 m² s⁻¹, in the boundary
-  layer). The cap stays as a safeguard against any unstable layer aloft.
-- **Relation to CM1:** `notes/cm1_migration.md`, "TKE closure".
-- **Effect.** It changes the physics only where K would exceed the cap. Normal maxima here are
-  ~30–40 m² s⁻¹, in the boundary layer. Diagnose how often the cap is active by checking
-  `maximum(model.closure_fields.Kᵘ)` (also printed with `debug_nan = true`).
-- **Changing it.** Pass a different value from the driver, which needs no recompile:
-  `build_model(sounding; arch, Nx, Ny, maximum_diffusivity = 50)`. `Inf` restores Breeze's
-  default.
-- **Upstream.** Worth raising with the Breeze developers: a mixing-length limit (e.g. a Blackadar
-  form ℓ = κz / (1 + κz / ℓ∞)) or finite default caps would prevent the runaway at its source.
+Then each experiment, from the repository directory on the login node:
 
-### 2. Microphysics built on the target architecture (bug workaround, no physics change)
-
-`microphysics = on_architecture(arch, ...)`. Breeze 0.11.3 and 0.12.0 embed the microphysics in
-the surface-flux boundary conditions before moving it to the GPU, so P3 GPU runs failed with "not
-isbits" (CPU lookup tables inside a GPU kernel). Building the microphysics on the GPU first avoids
-that; on CPU it does nothing. Breeze issue #1051, fixed on main by PR #1076 (2026-10-14) but not
-yet in a release.
-
-The default microphysics is now Breeze's mixed-phase one-moment scheme (non-equilibrium cloud
-liquid and cloud ice, rain, snow; from CloudMicrophysics.jl) rather than P3, which is not
-production ready in Breeze. `microphysics = :p3` restores P3. See `notes/one_moment_microphysics.md`.
-
-### Vertical grid above 18 km (driver)
-
-Above 18 km the driver's grid (`stretched_top_faces`) stretches Δz linearly from 500 m to about 1 km
-at the 28 km lid (58 levels). This improves the conditioning of the pressure solve for the longest
-horizontal waves. Set `Δz_top` in the driver. Why, and how to get CM1's 65 levels:
-`notes/cm1_migration.md`, "Vertical grid".
-
-### 3. Float64 pressure solve (numerical precision)
-
-Breeze GPU examples run entirely in Float32. Here the **pressure solve always runs in Float64**
-(`pressure_solver_type = Float64`, the default), because in Float32 it is unstable on the full
-512 × 256 km domain. On GPU the rest of the model runs in Float32 (mixed precision, the default);
-on CPU everything is Float64.
-
-- **Symptom.** In Float32 the temperature in the top grid cell (27.5–28 km) develops a
-  domain-scale pattern (wavelength ≈ the 512 km domain) that grows exponentially, by e-folds of
-  ~100 s with the default w-only sponge. It becomes visible about 10–15 simulated minutes in.
-  K then pins at the cap at 27.5 km, and the run ends in NaN in P3 ice number above 23 km
-  (iteration ~240, ~16 min).
-- **What it is not.** It is the same on CPU and GPU, and the same at 500 m and 4 km grid
-  spacing on the full domain. It is absent on the 16 × 8 km test domain. A stronger sponge
-  (`sponge_variables = :all`, `sponge_timescale = 60seconds`) only delays it, to ~1.7 h.
-- **Float64 removes it.** Full domain on GPU at 500 m, 3 h: the top-cell spread stays below
-  0.7 K, structure ~20 km, no cap, no NaN. The same holds on CPU at 4 km.
-- **Cause: the Float32 anelastic pressure solve (confirmed).** A Float32 model with a Float64
-  pressure solve is stable and matches all-Float64. A Float64 model with a Float32 pressure solve
-  fails like all-Float32 (4 km test domain on CPU). The solve is poorly conditioned for the
-  longest horizontal waves under a tall, strongly stratified column: roughly (k Δz)⁻² ≈ 3×10⁴ for
-  a 512 km wave with Δz = 500 m, while Float32 keeps only ~7 digits. Breeze's TC-world RCE
-  example (288 km, Δz = 1000 m at the top, about 13× better conditioned) runs in Float32. Draft
-  issue: `breeze_issue_pressure_precision.md`.
-- **Mixed precision (GPU default).** The model runs in Float32 with only the pressure solve in
-  Float64 (`helpers/pressure_solver_precision.jl`). On the A100, full domain, it took 0.67 s per
-  step against 1.3 s for all-Float64, about 2× faster. A 4-day run (~43,000 steps at Δt ≈ 8 s)
-  takes about 8 h instead of 15 h. Through 1 h its diagnostics matched all-Float64 to the printed
-  precision. It works by redefining Breeze's solver construction for the session (written
-  against Breeze 0.11.3, checked on 0.12.0; it warns on other versions), so it's a stopgap until Breeze has such an
-  option. All-Float64 remains available with `float_type = Float64`.
-
-The `sponge_variables = :all` option (relax u, v, θ in the sponge layer) remains available,
-but is not needed in Float64.
-
-### 4. Bounded (positivity-preserving) WENO scalar advection
-
-Every advected scalar uses `WENO(order=5, bounds=(min, max))` (`build_model`, keyword
-`bounded_scalar_advection = true`; bounds in `MonsoonConvection.scalar_bounds`). Breeze's default
-is unbounded WENO(5).
-
-- **Why.** Unbounded WENO can undershoot below zero at sharp edges, such as updraft and cloud
-  edges. Negative moisture, hydrometeor or number values can then make P3 produce NaN. The
-  first full-domain mixed-precision run failed with NaN at 17.5 h, at the onset of deep
-  convection. Breeze's TC-world RCE example, which runs strong convection in Float32, bounds its
-  moisture the same way. In a forced-condensation test, unbounded advection gave cloud and rain
-  minima of about −10⁻¹⁴; bounded advection keeps them at exactly 0. The physics is otherwise the
-  same.
-- **How.** Oceananigans' Zhang–Shu (2010) limiter (marked experimental) scales each cell's
-  reconstructions toward the cell mean, so that advection keeps the **specific** value
-  (kg/kg, K, per kg; Breeze divides by ρ) inside the bounds. Every field is named, because any
-  field left out of the NamedTuple would fall back to second-order `Centered` advection.
-
-  | Fields | Quantity | Bounds |
-  |---|---|---|
-  | `ρqᵛ`, `ρqᶜˡ`, `ρqʳ`, `ρqⁱ`, `ρqᶠ`, `ρqʷⁱ` | mass fractions | (0, 1) |
-  | `ρnʳ`, `ρnⁱ` | number per kg | (0, 10²⁰) |
-  | `ρbᶠ` | rime volume per kg (m³ kg⁻¹) | (0, 1) |
-  | `ρe` | TKE (m² s⁻²) | (0, 10⁶) |
-  | `ρθ` | liquid-ice potential temperature (K) | (150, 2000) |
-
-  Upper bounds are physical maxima, chosen loose so they never clip real values. The limiter acts
-  only where a reconstruction would leave the bounds.
-- **Not a strict guarantee here.** The limiter is guaranteed only for total Courant number
-  ≤ 5/18. We run at CFL 0.7, as Breeze's TC world does, which removes most undershoots but not
-  provably all.
-- **Sources must stay inside the bounds.** The limiter assumes the cell values are already
-  inside the bounds, and sources (radiation, latent heating, microphysics) can push them out. The driver checks the
-  specific range of every bounded field every 10 iterations. It warns (once per field; every
-  time with `debug_nan = true`) if a field leaves its bounds, which means the limiter is unreliable
-  there.
-- **Comparing.** `bounded_advection = false` restores Breeze's unbounded WENO(5) for all scalars.
-
-### 5. Fall speeds in the time-step limit (`sedimentation_cfl`, on by default)
-
-P3 moves each hydrometeor field by adding its fall speed to w in that field's advection. Breeze's
-time-step wizard limits Δt with u, v and w only, so the fall speed never constrains Δt, and
-Breeze 0.11.3 has no sedimentation substepping. Its adaptive implicit vertical advection leaves out
-the fall speeds on the anelastic path. Rain falls at up to ~9 m/s, and dense rimed ice at
-10–20 m/s. In the 50 m lowest cell at Δt ≈ 8 s, the fall Courant number |w + w_fall| Δt / Δz
-exceeds 1, and explicit WENO is unstable there.
-
-- **Evidence.** In a forced-condensation test (small domain, CPU), rain alone reached a fall
-  Courant number of 1.3–2.1 at Δt ≈ 8 s. The full-domain runs (mixed precision, bounded or
-  unbounded advection) all failed at the onset of deep convection (~17.5 h, iteration
-  ~7930–8000). Ice number went NaN first, from the lowest cell up, after max ice mass grew to
-  5 g/kg.
-- **Fix.** `sedimentation_cfl = true` (`build_simulation(...; sedimentation_cfl = true)`) also limits
-  Δt so that the fall Courant number ≤ `cfl` (0.7). In the test, Δt fell from ~8 s to ~3.5–4 s
-  while rain was present, so heavy precipitation costs roughly 2× more.
-  `debug_nan = true` prints the maximum fall Courant number and its height every 10 iterations.
-- **Better long-term fix (upstream).** Sedimentation substepping, or implicit
-  sedimentation, would remove the cost.
+```sh
+mkdir -p run/exp && cp monsoon_convection.jl run/exp/     # edit the settings in the copy
+sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh run/exp
+```
 
 ## Running the model
 
@@ -254,33 +66,33 @@ The copy finds `helpers/` and `cm1/` through the project (`--project`), wherever
 | `microphysics` | `:one_moment` | Mixed-phase one-moment, or `:p3` (not production ready; compiles at startup). |
 | `sponge_variables` | `:w` | Upper sponge above 20 km. `:w` damps only w; `:all` also relaxes u, v and θ toward the sounding. |
 | `sponge_timescale` | `300seconds` | Sponge damping time scale at the model top (sin² ramp from 20 km). |
-| **Fixes to Breeze (keep on)** | | |
-| `pressure_solver_type` | `Float64` | Precision of the pressure solve. A Float32 solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
-| `implicit_rain_sink` | `true` with one-moment | Backward-Euler rain–snow collection sinks, which otherwise drive rain and snow negative (`helpers/implicit_rain_sink_correction.jl`, `breeze_issue_uncapped_collection_sinks.md`). |
+| **Output** | | |
 | `flux_outputs` | `true` | Vertical-flux diagnostics: resolved covariances (`wu`, `wv`, `wtheta`, `wq*`), closure fluxes (`F_*_sgs`) and sedimentation fluxes (`F_*_sed`) in `_profiles.nc`; surface fluxes (`F_*_sfc`) and bottom-face sedimentation (precipitation) maps in `_surface.nc`. `false` builds none of them, so they cost no compute or memory. |
+| **Fixes to Breeze (keep on)** | | |
+| `pressure_solver_type` | `Float64` | Precision of the pressure solve. A Float32 solve is unstable on the full 512 km domain ([Changes to Breeze defaults](notes/breeze_defaults.md), 3). |
+| `implicit_rain_sink` | `true` with one-moment | Backward-Euler rain–snow collection sinks, which otherwise drive rain and snow negative (`helpers/implicit_rain_sink_correction.jl`, `issues/breeze_issue_uncapped_collection_sinks.md`). |
 | **Stability options** (on in every tested run; not yet tested off with the fixes) | | |
-| `sedimentation_cfl` | `true` | Also limit Δt by the hydrometeor fall speeds, so that (w + fall speed) Δt / Δz ≤ 0.7 (see "Changes to Breeze defaults", 5). |
-| `bounded_advection` | `true` | Bounds-preserving WENO for scalars; `false` gives Breeze's plain WENO(5) (see "Changes to Breeze defaults", 4). |
+| `sedimentation_cfl` | `true` | Also limit Δt by the hydrometeor fall speeds, so that (w + fall speed) Δt / Δz ≤ 0.7 ([notes](notes/breeze_defaults.md), 5). |
+| `bounded_advection` | `true` | Bounds-preserving WENO for scalars; `false` gives Breeze's plain WENO(5) ([notes](notes/breeze_defaults.md), 4). |
 
 Durations use `Oceananigans.Units`: `30minutes`, `1hour`, `4days`. Under Slurm the run stops and
 checkpoints 10 min before the job's time limit (it reads `SLURM_JOB_END_TIME`); there is no limit
 otherwise.
 
-### Run directory and output
+### Output files
 
-Output and checkpoints are written to the run directory (where Julia runs), and `restart = true`
-looks for checkpoints there.
+Output and checkpoints are written to the run directory (where Julia runs). `<prefix>` is
+`monsoon_convection`, or `monsoon_convection_small_test` with `small_test`.
 
 | File | Content |
 |---|---|
-| `<prefix>_profiles.nc` | Horizontal means, averaged over each hour |
-| `<prefix>_surface.nc` | Hourly snapshots at the lowest model level (z = 25 m) |
+| `<prefix>_profiles.nc` | Horizontal means, averaged over each hour, (z, time); includes the vertical fluxes |
+| `<prefix>_surface.nc` | Hourly snapshots at the lowest model level (z = 25 m), (x, y, 1, time); includes the surface fluxes |
 | `<prefix>_fields.nc` | 3D snapshots, daily (every 30 min with `small_test`) |
 | `<prefix>_checkpoint_iteration<N>.jld2` | Restart file (Julia format); only the latest is kept |
 
-`<prefix>` is `monsoon_convection`, or `monsoon_convection_small_test` with `small_test`.
-
-The NetCDF files have plain-ASCII variable names, with `units` and `long_name` attributes:
+The NetCDF files have plain-ASCII variable names, with `units` and `long_name` attributes. They open
+directly in Python (`xarray.open_dataset`), MATLAB (`ncread`), ncview, etc.
 
 | Variable | Meaning | Units |
 |---|---|---|
@@ -296,8 +108,14 @@ The NetCDF files have plain-ASCII variable names, with `units` and `long_name` a
 | `bf` | P3: rime volume per mass of air | m³ kg⁻¹ |
 | `radiative_flux_divergence` | (profiles only) radiative heating × ρ cₚ | W m⁻³ |
 | `w2` | (profiles only) vertical velocity variance | m² s⁻² |
+| `wu`, `wv`, `wtheta`, `wq<species>` | (profiles) resolved vertical flux ⟨w′a′⟩, deviations from the horizontal mean, on z faces (`z_aaf`) | a × m s⁻¹ |
+| `F_u_sgs`, `F_v_sgs`, `F_theta_sgs`, `F_<q>_sgs` | (profiles) subgrid (closure) vertical flux, on z faces | a × m s⁻¹ |
+| `F_<q>_sed` | sedimentation flux ⟨q w_fall⟩ (negative downward); profiles, and at the bottom face (precipitation) in the surface file | kg kg⁻¹ m s⁻¹ |
+| `F_u_sfc`, `F_v_sfc`, `F_theta_sfc`, `F_qv_sfc` | (surface) bulk boundary-condition fluxes, not covariances | a × m s⁻¹ |
 
-They open directly in Python (`xarray.open_dataset`), MATLAB (`ncread`), ncview, etc.
+All fluxes are kinematic and upward-positive; the resolved flux is zero at the bottom and top faces. The
+total flux of a species at an interior face is `w<q> + F_<q>_sgs + F_<q>_sed`; at z = 0 it is `F_*_sfc`
+(vapor, θ, momentum) and `F_<q>_sed` (precipitation). Details: `notes/STATUS.md`, "Flux outputs".
 
 ### Restarts
 
@@ -307,132 +125,61 @@ They open directly in Python (`xarray.open_dataset`), MATLAB (`ncread`), ncview,
   copy after the first job. The time step is recomputed from the CFL condition.
 - `stop_time` is the **total** simulated time, not additional time. A run checkpointed at 24 h
   with `stop_time = 48hours` runs 24 more hours.
-- On restart, output is **appended** to the existing NetCDF files.
+- On restart, output is **appended** to the existing NetCDF files (Oceananigans warns "already exists …
+  Mode will be set to append"; expected). Appending to files from an older version that lack the
+  flux variables may fail: restart into a fresh run directory instead.
 
-## Compile-run strategy
+## Setup on a laptop (CPU)
 
-Julia compiles code the first time it runs. For this model that cost about 2.5 min before the
-first time step of every run. The setup is:
+Tested with Julia 1.13.1 on an Apple M3 and on x86 (WSL). The Quick start commands are the whole
+setup. `setup_precompile.jl` takes about 2.5 min the first time and seconds when nothing changed. The
+first run of a fresh install also downloads the radiation and microphysics lookup tables, once per
+Julia depot. To test a restart, run the small test, then set `restart = true` and `stop_time = 1.5hour`
+in the copy and run it again.
 
-1. **Precompiled package, CPU warm-up.** All model and simulation setup lives in the package
-   `MonsoonConvection`. During precompilation it executes a short **warm-up run** on CPU: a
-   32×16×65 model that takes 3 steps, writes output and a checkpoint, and restarts from it.
-   Julia caches the compiled code, so a CPU test starts in about 25 s instead of 154 s.
-   `setup_precompile.jl` is the same on every machine.
-2. **GPU jobs compile their GPU code at startup.** There is deliberately no GPU precompile
-   step. On a 47 h job, a few minutes of compiling cost under 0.5%. An earlier version
-   precompiled a GPU warm-up inside a package extension. It failed in ways that were hard to
-   see (see Troubleshooting) and couldn't be tested without a GPU, so it was removed.
-3. **Check the real path.** `check_gpu.jl` builds the model on the GPU and takes time steps.
-   It reports PASS/FAIL per stage with the real error. Both setup scripts end with a
-   fresh-process check and exit non-zero on failure, because Pkg's summary can report "✗"
-   and still succeed.
-4. **Experiments are values, not code.** Compiled code depends on the *types* of the inputs,
-   not their *values*. The sounding is passed as plain vectors (`Sounding`), and the
-   geostrophic wind is read from a precomputed field. Changing the sounding (values or number
-   of levels), initial conditions, grid size or parameter values therefore reuses the cache.
-5. **Hardware is requested, never auto-detected.** `arch = :cpu | :gpu`. A quick check halts a
-   `:gpu` request before any package loads if no working GPU is present. CUDA is loaded only
-   for `gpu`, and is never compiled by `setup_precompile.jl`.
-6. **Compile on a compute node, with one portable CPU target.** On the cluster, precompile with
-   `sbatch precompile_job.sh`, which gives the precompile enough memory. Because
-   `JULIA_CPU_TARGET="haswell,-rdrnd"`, that cache works on every node type. The login node
-   only does `git pull` and downloads packages.
-
-### What triggers recompilation
-
-| Change | Recompile? |
-|---|---|
-| Sounding values or levels, initial conditions, perturbations | No |
-| Grid size, parameter values passed to `build_model` / `build_simulation`, run flags | No (a full-size grid compiles a few extra kernels at run time) |
-| Editing `MonsoonConvection/src`, even comments | Yes, the package (≈ 2 min) |
-| Microphysics or turbulence-closure *type*, new forcing kinds (edits in the package) | Yes, the package |
-| Package updates (`Pkg.update`) or a new Julia version | Yes |
-| A different CPU type (laptop vs. HPC node) | Separate cache per CPU type; they coexist |
-
-After any change that recompiles, run `setup_precompile.jl` again (and `check_gpu.jl` on the
-cluster) before production runs.
-
-## PC / laptop setup (CPU)
-
-Tested with Julia 1.13.1 on an Apple M3.
-
-```sh
-cd /path/to/breeze
-julia --project -e 'using Pkg; Pkg.instantiate()'
-julia --project setup_precompile.jl    # about 2.5 min once; seconds when nothing changed
-```
-
-The first run of a fresh install also downloads the radiation and microphysics lookup tables,
-once per Julia depot.
-
-```sh
-mkdir -p run/small_test && cp monsoon_convection.jl run/small_test/
-# in run/small_test/monsoon_convection.jl set  arch = :cpu  and  small_test = true, then
-cd run/small_test && julia --project=../.. monsoon_convection.jl     # 1 h
-# then set  restart = true  and  stop_time = 1.5hour  in the copy, and run it again
-```
-
-## HPC setup (GPU with CUDA, Slurm partition `ceoas-gpu`)
+## Setup on the HPC (GPU with CUDA, Slurm partition `ceoas-gpu`)
 
 Commands assume the repository is cloned to `~/monsoon-breeze` and runs go in a scratch
-directory. Replace paths as needed.
+directory. Replace paths as needed. Use Julia 1.13.x on every machine (juliaup).
 
-### 0. Inspect the partition (once)
-
-GPU request syntax, GPU types and limits differ between clusters, so check before writing jobs:
+**1. Inspect the partition (once).** GPU request syntax, types and limits differ between clusters:
 
 ```sh
 sinfo -p ceoas-gpu -o "%P %a %l %D %c %m %G"   # time limit, nodes, CPUs, memory, GPUs (GRES)
 scontrol show partition ceoas-gpu               # defaults and limits
 srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
-srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 lscpu | grep "Model name"
 srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 curl -sI https://github.com | head -1   # internet on compute nodes?
 ```
 
-- Use a GPU with at least 24 GB of memory (see "Model domain and resources"). If the partition
-  mixes GPU types, request one explicitly, e.g. `--gres=gpu:a100:1`. The type names are shown
-  in the `%G` column of `sinfo`.
-- Some clusters use `--gpus=1` instead of `--gres=gpu:1`.
-- **No internet on compute nodes?** Lookup tables and the CUDA runtime are downloaded on first
-  use. Trigger the downloads once from the login node: run `Pkg.instantiate()` (step 1), then
-  `julia --project -e 'using CUDA'` after pinning the CUDA runtime version (step 2).
+- Use a GPU with at least 24 GB (see [domain and resources](#model-domain-and-resources)). If the
+  partition mixes GPU types, request one, e.g. `--gres=gpu:a100:1` (`%G` in `sinfo` lists the names).
+  Some clusters use `--gpus=1`.
+- **No internet on compute nodes?** The lookup tables and the CUDA runtime download on first use.
+  Trigger them once on the login node: `Pkg.instantiate()` (step 2), then
+  `julia --project -e 'using CUDA'` after pinning the CUDA runtime (step 3).
 
-### 1. Environment and Julia depot (login node)
+**2. Environment and Julia depot (login node).**
 
 ```sh
-git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze
-cd ~/monsoon-breeze
+git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze && cd ~/monsoon-breeze
 export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional; put this in ~/.bashrc
-# download the pinned package versions; skip Pkg's automatic precompile of everything,
-# which would also compile CUDA.jl (that can fail on a login node without a GPU driver)
+export JULIA_CPU_TARGET="haswell,-rdrnd"              # in ~/.bashrc
+# download the pinned package versions; skip Pkg's automatic precompile, which would also
+# compile CUDA.jl (that can fail on a login node without a GPU driver)
 JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Use Julia 1.13.x on every machine; juliaup makes this easy. Without a tracked manifest, `Pkg.instantiate` resolves one from the compat bounds.
+Without a tracked manifest, `Pkg.instantiate` resolves one from the compat bounds. **CPU type:** compile
+caches are keyed by CPU type, and the single portable target `haswell,-rdrnd` lets one cache serve
+every node (the login node, the A100 nodes and the other GPU nodes all support Haswell). Batch jobs and
+`srun` sessions inherit it from your shell; a job that sees a different `JULIA_CPU_TARGET` rejects the
+cache and recompiles at startup. Avoid multi-target strings: they multiply the memory needed to
+precompile (five targets ran out of memory even on the login node).
 
-**CPU type.** Compile caches are keyed by CPU type. Use the single portable target
-
-```sh
-export JULIA_CPU_TARGET="haswell,-rdrnd"     # in ~/.bashrc
-```
-
-so that one cache serves every node: the login node (AMD znver2), the A100 nodes (Intel
-Sapphire Rapids) and the other GPU nodes. All of them support the Haswell instruction set.
-Batch jobs and `srun` sessions inherit it from your shell. A job that sees a different
-`JULIA_CPU_TARGET` rejects the cache and recompiles at startup. Avoid multi-target
-strings (e.g. `"generic;sandybridge,clone_all;haswell,clone_all;…"`): they multiply the memory
-needed to precompile. Five targets ran out of memory even on the login node's limit.
-
-### 2. Set up and check a GPU node (interactive)
-
-All compiling happens on a compute node, which has the NVIDIA driver and enough memory.
-Precompiling needs about 6 GB, more than the login node allows.
-
-**Precompile as a batch job** (simplest), from the repository directory on the login node:
+**3. Precompile and check a GPU node.** All compiling happens on a compute node, which has the NVIDIA
+driver and enough memory (the precompile needs about 6 GB, more than the login node allows):
 
 ```sh
-cd /ceoas/deszoeks/projects/monsoon-breeze
 sbatch precompile_job.sh          # no GPU needed, 32 GB, ≈ 5 min; log in slurm-precompile-<jobid>.out
 ```
 
@@ -442,46 +189,36 @@ The log ends with `Load check: ok`. Then check the GPU interactively:
 srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l
 cd ~/monsoon-breeze
 nvidia-smi                                  # your GPU: ~0 MiB used, no other processes
-echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES  # set inside a GPU allocation
-
-julia --project setup_precompile.jl         # (or this, if you skipped the batch job)
 julia --project check_gpu.jl                # CUDA, GPU context, model compiles and steps on the GPU
 julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-min end-to-end run
 ```
 
-`check_gpu.jl` prints PASS/FAIL per stage and stops at the first failure with the real error.
+`check_gpu.jl` prints PASS/FAIL per stage and stops at the first failure with the real error. If
+stage 1 says "CUDA is not functional", pin the CUDA runtime to the driver's version (stored in the
+per-machine, git-ignored `LocalPreferences.toml`):
 
-- **Stage 1 fails with "CUDA is not functional":** the message gives the fix, which is to pin
-  the CUDA runtime to the driver's version, e.g.
+```sh
+julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.8")'   # version from nvidia-smi
+```
 
-  ```sh
-  julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.8")'   # version from nvidia-smi
-  ```
+For stage 2 ("GPU busy or not allocated to you") see [Troubleshooting](#troubleshooting). Rerun
+`sbatch precompile_job.sh` and `check_gpu.jl` after every `git pull` that changes `MonsoonConvection/src`,
+and after package updates.
 
-  The pin is stored in `LocalPreferences.toml`, which is per machine and git-ignored.
-- **Stage 2 fails, "the GPU is busy or not allocated to you":** see Troubleshooting ("Out of GPU
-  memory" while creating a context).
-
-Rerun the precompile (`sbatch precompile_job.sh`) and `check_gpu.jl` after every `git pull` that
-changes `MonsoonConvection/src`, and after package updates.
-
-### 3. Measure throughput (interactive, optional)
+**4. Measure throughput (optional).** Run the full domain for one simulated hour in an interactive GPU session:
 
 ```sh
 mkdir -p run/gpu_1h && cp monsoon_convection.jl run/gpu_1h/   # set stop_time = 1hour in the copy
 cd run/gpu_1h && julia --project=../.. monsoon_convection.jl 2>&1 | tee gpu_1h.log
 ```
 
-This runs the full domain for one simulated hour. Watch memory with `nvidia-smi` in a second
-shell. The progress lines show wall time per 100 steps; multiply by the expected number of
-steps (25,000–45,000) to estimate the length of the full run.
+Watch memory with `nvidia-smi` in a second shell. The progress lines show wall time per 100 steps;
+multiply by the expected number of steps (25,000–45,000) to estimate the full run.
 
-### 4. Production runs (batch)
-
-Make the run directory with its copy of the driver, edit the copy's settings, then submit
-[`monsoon_job.sh`](monsoon_job.sh) from the **repository directory** on the **login node**. The
-script takes only the run directory; the partition and GPU go on the `sbatch` line. Its header
-lists the partitions and working `sbatch` and `srun` lines.
+**5. Production runs (batch).** Make the run directory with its copy of the driver, edit the copy's
+settings, then submit [`monsoon_job.sh`](monsoon_job.sh) from the **repository directory** on the
+**login node**. It takes only the run directory; the partition and GPU go on the `sbatch` line (its
+header lists the partitions and working `sbatch` and `srun` lines):
 
 ```sh
 cd /ceoas/deszoeks/projects/monsoon-breeze
@@ -491,34 +228,54 @@ sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh run/exp          # A100 (x8
 # continue: set restart = true in run/exp/monsoon_convection.jl, then submit again
 ```
 
-The script:
-- requests 2 CPUs, 32 GB and 2 h. For long runs pass `--time`, e.g. `sbatch --time=48:00:00 ...`;
-- sources [`helpers/arch_env.sh`](helpers/arch_env.sh), which sets Julia and Slurm up for the
-  node's architecture (`uname -m`):
-  - juliaup's Julia 1.13, not the system `julia`, which is 1.10;
-  - that architecture's Julia depot, `JULIA_CPU_TARGET` and Slurm commands;
-  - it removes the other architectures' directories from `PATH`.
+The script requests 2 CPUs, 32 GB and 2 h (for long runs pass `--time`, e.g. `sbatch --time=48:00:00 ...`),
+sources [`helpers/arch_env.sh`](helpers/arch_env.sh) (juliaup's Julia 1.13 rather than the system 1.10,
+that architecture's depot, `JULIA_CPU_TARGET` and Slurm commands; add it to `~/.bashrc` so interactive
+shells match), stops at once if the allocated GPU has less than 40 GB free, and writes the log to
+`<run directory>/slurm-<jobid>.out` (node, GPU, Julia version and the copy's settings, ending with
+"Reached stop time …" or "Wall-time limit reached …").
 
-  Add `source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh` to `~/.bashrc` so
-  login and interactive shells match;
-- stops at once if the allocated GPU has less than 40 GB free;
-- writes the log to `<run directory>/slurm-<jobid>.out`. The log starts with the node, GPU,
-  Julia version and the copy's settings, and ends with "Reached stop time …" or "Wall-time limit
-  reached …".
-
-Notes:
 - **Avoid `ceoas-arm-lowprio`.** A preempted job is requeued and reruns the copy as it is, from
   t = 0 unless `restart = true` is already set there.
 - **Chained continuations** (`sbatch --dependency=afterok:$jid ...`) read the copy when they
   start, so set `restart = true` before the first job finishes.
-- **The run stops 10 min before the job's time limit** and writes a checkpoint. That margin covers
-  the final checkpoint; startup (compiling the GPU code, a few minutes) is inside the job's time.
+- **The run stops 10 min before the job's time limit** and writes a checkpoint. Startup (compiling
+  the GPU code, a few minutes) is inside the job's time.
 - **Submit from the login node,** not from inside an interactive `srun` session, whose Slurm
   settings the job would inherit.
 
-**GPU startup.** The precompiled code covers the CPU side. GPU jobs compile their GPU-specific
-code (GPU-specific methods and CUDA kernels) at startup, which takes a few minutes and is part of
-the job's time.
+## Compiling
+
+Julia compiles code the first time it runs; for this model that cost about 2.5 min before the first
+time step. The setup:
+
+- **Precompiled package, CPU warm-up.** All model and simulation setup lives in the package
+  `MonsoonConvection`. During precompilation it runs a short warm-up on CPU (a 32×16×65 model: 3 steps,
+  output, a checkpoint, a restart), so a CPU test starts in about 25 s instead of 154 s.
+  `setup_precompile.jl` is the same on every machine.
+- **GPU code compiles at startup.** There is deliberately no GPU precompile (an earlier version failed in
+  hard-to-see ways and could not be tested without a GPU). A few minutes of compiling costs under 0.5% of
+  a 47 h job. `check_gpu.jl` builds the model on the GPU and takes steps, reporting PASS/FAIL per stage.
+- **Experiments are values, not code.** Compiled code depends on the *types* of the inputs, not their
+  *values*: the sounding is plain vectors (`Sounding`), the geostrophic wind a precomputed field. Changing
+  the sounding, initial conditions, grid size or parameters reuses the cache.
+- **Hardware is requested, never auto-detected** (`arch = :cpu | :gpu`). A `:gpu` request halts before any
+  package loads if no working GPU is present. CUDA is loaded only for `gpu`, and never by `setup_precompile.jl`.
+- **Compile on a compute node,** with the one portable CPU target. The login node only does `git pull`
+  and downloads. Both setup scripts end with a fresh-process load check and exit non-zero on failure, since
+  Pkg's summary can report "✗" and still succeed.
+
+| Change | Recompile? |
+|---|---|
+| Sounding values or levels, initial conditions, perturbations | No |
+| Grid size, parameter values passed to `build_model` / `build_simulation`, run flags (e.g. `flux_outputs`) | No (a full-size grid compiles a few extra kernels at run time) |
+| Editing `MonsoonConvection/src`, even comments | Yes, the package (≈ 2 min) |
+| Microphysics or turbulence-closure *type*, new forcing kinds (edits in the package) | Yes, the package |
+| Package updates (`Pkg.update`) or a new Julia version | Yes |
+| A different CPU type (laptop vs. HPC node) | Separate cache per CPU type; they coexist |
+
+After any change that recompiles, run `setup_precompile.jl` again (and `check_gpu.jl` on the cluster)
+before production runs.
 
 ## Writing a new experiment
 
@@ -540,66 +297,134 @@ new sounding.
 - **Grid and physical parameters** are keyword values of `build_model`, e.g.
   `build_model(sounding; arch, Nx, Ny, Δx = 250, sea_surface_temperature = 302, CO₂ = 420e-6)`.
   Pass `z_faces` as a `Vector` (`collect(...)`), not a range.
+- **Initial conditions.** Use `set_initial_conditions!(model, sounding)`, or `set!` with functions of
+  `(x, y, z)`. `set!` expects `θ` (liquid-ice potential temperature), `qᵗ` (total-water **specific
+  humidity**, qᵗ = r / (1 + r)), `u` and `v`.
 
-- **Initial conditions.** Use `set_initial_conditions!(model, sounding)`, or
-  `set!` with functions of `(x, y, z)`. `set!` expects:
-  - `θ`: liquid-ice potential temperature
-  - `qᵗ`: total-water **specific humidity**, qᵗ = r / (1 + r)
-  - `u`, `v`
-
-None of these recompile the package. Changing a physics *scheme* is done in the "Model"
-section of `MonsoonConvection/src/MonsoonConvection.jl` and does recompile.
-
-## Glossary
-
-- **Precompilation**: Julia compiles a package ahead of time and stores the result (a
-  *package image*, or "pkgimage") in the depot, so later sessions load compiled code instead
-  of compiling it.
-- **Warm-up run** (PrecompileTools "workload"): a short model run executed *during*
-  precompilation so that the code it exercises is compiled and cached. It is about which code
-  gets cached, not about hardware.
-- **Compile cache / depot**: where precompiled packages live (`~/.julia` by default;
-  `JULIA_DEPOT_PATH` to change). Caches are specific to the Julia version, package versions,
-  CPU type and preferences.
-- **Preference** (`LocalPreferences.toml`): a per-machine setting read at compile time, e.g.
-  CUDA's pinned runtime version.
-- **CUDA context**: the per-process state CUDA creates on the GPU at the first GPU operation.
-  Creating it fails if the GPU is busy or not allocated to you.
-- **Checkpoint**: a file with the full model state, used to restart a run.
+None of these recompile the package. Changing a physics *scheme* is done in the "Model" section of
+`MonsoonConvection/src/MonsoonConvection.jl` and does recompile.
 
 ## Troubleshooting
 
-These are the failures met while setting up the cluster, with causes and fixes:
+Failures met while setting up the cluster, with causes and fixes:
 
-- **"GPU requested, but no NVIDIA GPU was found"**: you're on a node without a GPU (e.g. the
-  login node). Move to a GPU allocation (`srun ... --gres=gpu:1`) or set `arch = :cpu`. Nothing
-  was changed.
-- **"CUDA is not functional"** (or "CUDA.jl could not find an appropriate CUDA runtime"): CUDA's
-  runtime package was compiled on a node without a driver (the login node) and recorded "no
-  runtime". Pin the runtime version on the GPU node as `check_gpu.jl` instructs. Avoid it in
-  future by never precompiling on the login node; install there with
-  `JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'`.
-- **"Out of GPU memory" while creating a context** (stack trace through
-  `cuDevicePrimaryCtxRetain`), even for a tiny model: the GPU is in use by another process, or
-  your shell has no GPU allocated. Check `echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES` (empty
-  means no allocation), `nvidia-smi` (other processes, memory use) and
+- **"GPU requested, but no NVIDIA GPU was found"**: you're on a node without a GPU (e.g. the login node).
+  Move to a GPU allocation (`srun ... --gres=gpu:1`) or set `arch = :cpu`. Nothing was changed.
+- **"CUDA is not functional"** (or "CUDA.jl could not find an appropriate CUDA runtime"): CUDA's runtime
+  package was compiled on a node without a driver (the login node) and recorded "no runtime". Pin the
+  runtime version on the GPU node as `check_gpu.jl` instructs. Avoid it by never precompiling on the login
+  node; install there with `JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'`.
+- **"Out of GPU memory" while creating a context** (stack trace through `cuDevicePrimaryCtxRetain`), even
+  for a tiny model: the GPU is in use by another process, or your shell has no GPU allocated. Check
+  `echo $SLURM_JOB_GPUS $CUDA_VISIBLE_DEVICES` (empty means no allocation), `nvidia-smi` and
   `ps -u $USER -f | grep julia` (leftover sessions). Start a fresh `srun ... --gres=gpu:1`.
-- **LLVM "out of memory" or `ProcessSignaled(9)` while precompiling**: not enough memory for
-  the precompile, which needs about 6 GB. Login nodes usually allow less, and a multi-target
-  `JULIA_CPU_TARGET` multiplies the need. Precompile with `sbatch precompile_job.sh` (32 GB),
-  and use the single target `JULIA_CPU_TARGET="haswell,-rdrnd"`.
-- **NaN in P3 ice number above 23 km after ~15 min (or later), preceded by a growing top-cell
-  temperature spread and max `Kᵘ` at the cap at 27.5 km** (`debug_nan = true`): the Float32
-  instability on the full domain, from a Float32 pressure solve. Keep the default
-  `pressure_solver_type = Float64` (check that the run's copy doesn't set Float32). See "Changes to
-  Breeze defaults", 3.
-- **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small
-  for the full domain (≈ 15 GiB in the default mixed precision, ≈ 30 GiB all-Float64). Request a larger GPU type, or reduce `Nx`,
-  `Ny` in the driver.
+- **LLVM "out of memory" or `ProcessSignaled(9)` while precompiling**: the precompile needs about 6 GB;
+  login nodes usually allow less, and a multi-target `JULIA_CPU_TARGET` multiplies the need. Use
+  `sbatch precompile_job.sh` (32 GB) and the single target `JULIA_CPU_TARGET="haswell,-rdrnd"`.
+- **NaN in P3 ice number above 23 km after ~15 min (or later), preceded by a growing top-cell temperature
+  spread and max `Kᵘ` at the cap at 27.5 km** (`debug_nan = true`): the Float32 instability from a
+  Float32 pressure solve. Keep the default `pressure_solver_type = Float64` (check that the run's copy
+  doesn't set Float32). See [Changes to Breeze defaults](notes/breeze_defaults.md), 3.
+- **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small for the full
+  domain (≈ 15 GiB in the default mixed precision, ≈ 30 GiB all-Float64). Request a larger GPU type, or
+  reduce `Nx`, `Ny` in the driver.
 - **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
-  (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at
-  precompile time and run time, and that nothing edits `MonsoonConvection/src`.
-- **Leftover `[MonsoonConvection] precompile_gpu` in `LocalPreferences.toml`**: from an earlier
-  version; nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
-- **NetCDF "already exists … Mode will be set to append"** on a restart: expected; output
-  continues in the same files.
+  (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and
+  that nothing edits `MonsoonConvection/src`.
+- **Leftover `[MonsoonConvection] precompile_gpu` in `LocalPreferences.toml`**: from an earlier version;
+  nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
+
+## Reference
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
+| `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
+| `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
+| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory; no GPU needed. |
+| `check_gpu.jl` | Staged check that a GPU node can run the model; `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
+| `monsoon_job.sh` | Slurm batch script for GPU runs: `sbatch -p <partition> --gres=<gpu> monsoon_job.sh <run directory>`. |
+| `helpers/` | `preflight.jl` (flags and the GPU check, before any package loads), `pressure_solver_precision.jl` (run-time override giving the pressure solve its own precision; a stopgap until Breeze offers this), `arch_env.sh`, soundings and graph helpers. |
+| `Project.toml` | Julia environment. Package versions are bounded by the compat entries in `MonsoonConvection/Project.toml`; each machine keeps its own untracked `Manifest.toml`. |
+| `LocalPreferences.toml` | Per-machine settings, e.g. the pinned CUDA runtime version on the cluster (git-ignored). |
+| `run/` | Run directories for output and checkpoints (git-ignored except each run's driver copy). |
+| `plots/` | Readers, diagnostics and notebooks for the output (CairoMakie, PythonPlot). |
+| `notes/`, `issues/` | Status, design notes, Breeze issues and the flux-diagnostics PR guide. |
+| `cm1/` | Original CM1 namelist, sounding and log. |
+
+### Model domain and resources
+
+| | Full run | `small_test = true` |
+|---|---|---|
+| Columns (Nx × Ny) | 1024 × 512 | 32 × 16 |
+| Horizontal extent | 512 km × 256 km, Δx = Δy = 500 m | 16 km × 8 km |
+| Vertical | 58 levels to 28 km: Δz = 50 m at the surface, stretching linearly to 500 m at 5 km, 500 m to 18 km, then stretching to ~1 km at the lid | same |
+| Grid cells | 30.4 million | 29,696 |
+| Boundaries | periodic in x and y; rigid lid with a sponge above 20 km | same |
+| Rotation | f-plane, f = 2.53 × 10⁻⁵ s⁻¹ (10°N) | same |
+| Simulated time | `stop_time` | 1 h |
+| Time step | adaptive, CFL 0.7, at most 15 s (≈ 8 s in the 1 h tests, before deep convection) | same |
+| Time steps | roughly 25,000–45,000 | ≈ 570 |
+
+**Memory** (estimates from `Base.summarysize` at 32×16 and 64×64, extrapolated linearly; check with
+`nvidia-smi` in the first GPU run). The model plus simulation state is about 111 3D arrays, about 444 bytes
+per grid cell including halos in Float32 (the GPU default), twice that in Float64:
+
+| Configuration | Model state |
+|---|---|
+| Full run, Float32 model + Float64 pressure solve (GPU default) | **≈ 15 GiB**, plus a few GB of Float64 pressure-solve arrays |
+| Full run, all Float64 | ≈ 30 GiB |
+| `small_test`, Float32 (measured) | ≈ 54 MiB |
+
+Allow headroom for the CUDA context and temporary arrays: the full domain needs a GPU with **at least
+24 GB** in the default mixed precision, or 48 GB all-Float64; the A100 80 GB is comfortable either way.
+Host memory needs are modest (output is copied to the host, ≈ 2 GB per 3D snapshot; 32–64 GB is ample).
+
+**Disk** (estimates for the full run, per experiment):
+
+| File | Size |
+|---|---|
+| `_fields.nc`: 14 variables × 30.4 M cells × 4 B per daily snapshot, 5 snapshots | ≈ 2 GB each, ≈ 10 GB total |
+| `_surface.nc`: hourly, about 96 snapshots | ≈ 3 GB (more with the surface-flux and sedimentation variables) |
+| `_profiles.nc` | < 10 MB (more with the flux profiles) |
+| Checkpoint (JLD2, only the latest kept) | a few GB |
+
+**Wall-clock time.** GPU throughput on the full domain is about 0.67 s per step in the default mixed
+precision on an A100, 1.3 s all-Float64 (see [Changes to Breeze defaults](notes/breeze_defaults.md), 3).
+On a laptop CPU the small test runs at about 0.27 s per step. Time a short full-size GPU run first
+(step 4 of the HPC setup) to choose the job's `--time`.
+
+### Changes to Breeze defaults
+
+`MonsoonConvection` departs from Breeze's defaults or usual practice in the places below. Keep them in mind when
+interpreting results or comparing with other Breeze runs. The reasons, evidence and effects are in
+**[`notes/breeze_defaults.md`](notes/breeze_defaults.md)**.
+
+1. **TKE closure diffusivities capped at 100 m² s⁻¹** (safeguard; changes the physics only where K would
+   exceed the cap). `maximum_diffusivity` in `build_model`; `Inf` restores Breeze's default.
+2. **Microphysics built on the target architecture** (bug workaround, no physics change; Breeze #1051, fixed on main
+   by #1076). The default microphysics is the mixed-phase one-moment scheme, not P3 (`microphysics = :p3`).
+   The vertical grid above 18 km (`Δz_top`) is also in the driver.
+3. **Float64 pressure solve** (`pressure_solver_type`, default `Float64`): a Float32 solve is unstable on the full
+   512 × 256 km domain. On GPU the rest of the model runs in Float32 (about 2× faster than all-Float64); on CPU
+   everything is Float64.
+4. **Bounded (positivity-preserving) WENO** for every advected scalar (`bounded_advection`), so that
+   moisture, hydrometeors and numbers cannot go negative (negative values can make P3 return NaN).
+5. **Fall speeds in the time-step limit** (`sedimentation_cfl`): Breeze's time-step wizard ignores hydrometeor fall
+   speeds, which exceed the CFL limit in the 50 m lowest cell.
+
+### Glossary
+
+- **Precompilation**: Julia compiles a package ahead of time and stores the result (a *package image*) in the
+  depot, so later sessions load compiled code.
+- **Warm-up run**: a short model run executed *during* precompilation so that the code it exercises is
+  compiled and cached; it is about which code gets cached, not about hardware.
+- **Compile cache / depot**: where precompiled packages live (`~/.julia` by default; `JULIA_DEPOT_PATH` to
+  change). Caches are specific to the Julia version, package versions, CPU type and preferences.
+- **Preference** (`LocalPreferences.toml`): a per-machine setting read at compile time, e.g. CUDA's pinned
+  runtime version.
+- **CUDA context**: the per-process state CUDA creates on the GPU at the first GPU operation; creating it
+  fails if the GPU is busy or not allocated to you.
+- **Checkpoint**: a file with the full model state, used to restart a run.

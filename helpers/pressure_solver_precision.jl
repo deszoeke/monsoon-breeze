@@ -5,7 +5,7 @@
 # Why: the Fourier–tridiagonal pressure solve is poorly conditioned for the longest horizontal
 # waves under a tall, strongly stratified anelastic column. On the 512 km domain a Float32 solve
 # is unstable (a domain-scale mode grows in the top cell), while a Float64 solve with an otherwise
-# Float32 model is stable and matches an all-Float64 run (see README, "Changes to Breeze
+# Float32 model is stable and matches an all-Float64 run (see notes/breeze_defaults.md, "Changes to Breeze
 # defaults", and breeze_issue_pressure_precision.md).
 #
 # How: this REDEFINES Breeze's `dynamics_pressure_solver(::AnelasticDynamics, grid)` for this
