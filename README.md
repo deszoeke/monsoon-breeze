@@ -22,13 +22,15 @@ mkdir -p run/small_test && cp monsoon_convection.jl run/small_test/
 cd run/small_test && julia --project=../.. monsoon_convection.jl
 ```
 
-HPC (GPU), on the login node, once (see [Setup on the HPC](#setup-on-the-hpc-gpu-with-cuda-slurm-partition-ceoas-gpu)
-for `~/.bashrc`, the CPU target and the GPU check):
+HPC (GPU), once, **in this order** (details and the GPU check: [Setup on the HPC](#setup-on-the-hpc-gpu-with-cuda-slurm-partition-ceoas-gpu)):
 
 ```sh
-git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze && cd ~/monsoon-breeze
-JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
-sbatch precompile_job.sh                      # ≈ 5 min; the log ends "Load check: ok"
+git clone git@github.com:deszoeke/monsoon-breeze.git /ceoas/deszoeks/projects/monsoon-breeze && cd /ceoas/deszoeks/projects/monsoon-breeze
+echo 'source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh' >> ~/.bashrc    # Julia, depot, CPU target, Slurm per architecture
+source helpers/arch_env.sh
+JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'   # per architecture, on a node of it
+sbatch -p ceoas precompile_job.sh             # x86_64 (A100 nodes), ≈ 5 min; the log ends "Load check: ok"
+sbatch -p ceoas-arm precompile_job.sh         # aarch64 (GH200 nodes): once per architecture you will run on
 ```
 
 Then each experiment, from the repository directory on the login node:
@@ -36,6 +38,7 @@ Then each experiment, from the repository directory on the login node:
 ```sh
 mkdir -p run/exp && cp monsoon_convection.jl run/exp/     # edit the settings in the copy
 sbatch -p ceoas-gpu --gres=gpu:a100:1 monsoon_job.sh run/exp
+sbatch -p ceoas-arm --gres=gpu:gh200_480gb:1 --time=2:00:00 monsoon_job.sh run/exp
 ```
 
 ## Running the model
@@ -139,7 +142,7 @@ in the copy and run it again.
 
 ## Setup on the HPC (GPU with CUDA, Slurm partition `ceoas-gpu`)
 
-Commands assume the repository is cloned to `~/monsoon-breeze` and runs go in a scratch
+Commands assume the repository is cloned to `/ceoas/deszoeks/projects/monsoon-breeze` and runs go in a scratch
 directory. Replace paths as needed. Use Julia 1.13.x on every machine (juliaup).
 
 **1. Inspect the partition (once).** GPU request syntax, types and limits differ between clusters:
@@ -155,39 +158,51 @@ srun -p ceoas-gpu --gres=gpu:1 -t 0:05:00 curl -sI https://github.com | head -1 
   partition mixes GPU types, request one, e.g. `--gres=gpu:a100:1` (`%G` in `sinfo` lists the names).
   Some clusters use `--gpus=1`.
 - **No internet on compute nodes?** The lookup tables and the CUDA runtime download on first use.
-  Trigger them once on the login node: `Pkg.instantiate()` (step 2), then
-  `julia --project -e 'using CUDA'` after pinning the CUDA runtime (step 3).
+  Trigger them once from a node that has internet, in that architecture's environment (step 2): `Pkg.instantiate()`,
+  then `julia --project -e 'using CUDA'` after pinning the CUDA runtime (step 3).
 
-**2. Environment and Julia depot (login node).**
+**2. Environment and Julia depot (once per architecture, in this order).** The home directory is shared by the
+x86_64 and aarch64 nodes, but Julia, its depot and compiled code are per architecture.
+[`helpers/arch_env.sh`](helpers/arch_env.sh) sets them from `uname -m`: juliaup's Julia 1.13 (not the system
+1.10), the depot (`~/.julia` on x86_64, `~/.julia-aarch64` on aarch64), `JULIA_CPU_TARGET` (`haswell,-rdrnd` on
+x86_64 so that one cache serves every node; unset, i.e. native, on aarch64) and that architecture's Slurm
+commands. The batch scripts source it themselves; your shells must too, **before** any `julia` command:
 
 ```sh
-git clone git@github.com:deszoeke/monsoon-breeze.git ~/monsoon-breeze && cd ~/monsoon-breeze
-export JULIA_DEPOT_PATH=/path/to/shared/julia_depot   # optional; put this in ~/.bashrc
-export JULIA_CPU_TARGET="haswell,-rdrnd"              # in ~/.bashrc
+git clone git@github.com:deszoeke/monsoon-breeze.git /ceoas/deszoeks/projects/monsoon-breeze && cd /ceoas/deszoeks/projects/monsoon-breeze
+echo 'source /ceoas/deszoeks/projects/monsoon-breeze/helpers/arch_env.sh' >> ~/.bashrc     # new shells, once
+source helpers/arch_env.sh                                            # this shell
+julia --version; echo "$JULIA_DEPOT_PATH  ${JULIA_CPU_TARGET:-native}  $(uname -m)"   # check: 1.13.x and the right depot
 # download the pinned package versions; skip Pkg's automatic precompile, which would also
 # compile CUDA.jl (that can fail on a login node without a GPU driver)
 JULIA_PKG_PRECOMPILE_AUTO=0 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
-Without a tracked manifest, `Pkg.instantiate` resolves one from the compat bounds. **CPU type:** compile
-caches are keyed by CPU type, and the single portable target `haswell,-rdrnd` lets one cache serve
-every node (the login node, the A100 nodes and the other GPU nodes all support Haswell). Batch jobs and
-`srun` sessions inherit it from your shell; a job that sees a different `JULIA_CPU_TARGET` rejects the
-cache and recompiles at startup. Avoid multi-target strings: they multiply the memory needed to
-precompile (five targets ran out of memory even on the login node).
+Run the last command on a node of each architecture you will use: the x86_64 login node for x86_64, and an
+`srun -p ceoas-arm` session (with internet) for aarch64, since the packages go into that architecture's own depot.
+Do **not** export `JULIA_DEPOT_PATH` or `JULIA_CPU_TARGET` yourself: the shared `~/.bashrc` would apply them to
+both architectures (`haswell` is not a valid target on aarch64). A job that sees a different
+`JULIA_CPU_TARGET` than the one a cache was built with rejects it and recompiles at startup. Without a tracked
+manifest, `Pkg.instantiate` resolves one from the compat bounds. Avoid multi-target `JULIA_CPU_TARGET` strings:
+they multiply the memory needed to precompile (five targets ran out of memory even on the login node).
 
 **3. Precompile and check a GPU node.** All compiling happens on a compute node, which has the NVIDIA
 driver and enough memory (the precompile needs about 6 GB, more than the login node allows):
 
 ```sh
-sbatch precompile_job.sh          # no GPU needed, 32 GB, ≈ 5 min; log in slurm-precompile-<jobid>.out
+sbatch -p ceoas precompile_job.sh       # x86_64 (for the A100 nodes)
+sbatch -p ceoas-arm precompile_job.sh   # aarch64 (for the GH200 nodes)
 ```
+
+No GPU is needed (32 GB, ≈ 5 min; log in `slurm-precompile-<jobid>.out`), but name a partition of the
+architecture you are compiling for: x86_64 and aarch64 have separate Julia depots and caches
+(`helpers/arch_env.sh` picks them from the node the job lands on), so run it once per architecture.
 
 The log ends with `Load check: ok`. Then check the GPU interactively:
 
 ```sh
-srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l
-cd ~/monsoon-breeze
+srun -p ceoas-gpu --gres=gpu:1 --cpus-per-task=4 --mem=32G --time=1:00:00 --pty bash -l   # or -p ceoas-arm --gres=gpu:gh200_480gb:1
+cd /ceoas/deszoeks/projects/monsoon-breeze && source helpers/arch_env.sh   # the interactive shell needs it too (julia --version: 1.13.x)
 nvidia-smi                                  # your GPU: ~0 MiB used, no other processes
 julia --project check_gpu.jl                # CUDA, GPU context, model compiles and steps on the GPU
 julia --project check_gpu.jl --smoke_test   # once before production: adds a 10-min end-to-end run
@@ -202,7 +217,7 @@ julia --project -e 'using CUDA; CUDA.set_runtime_version!(v"12.8")'   # version 
 ```
 
 For stage 2 ("GPU busy or not allocated to you") see [Troubleshooting](#troubleshooting). Rerun
-`sbatch precompile_job.sh` and `check_gpu.jl` after every `git pull` that changes `MonsoonConvection/src`,
+the precompile (for each architecture) and `check_gpu.jl` after every `git pull` that changes `MonsoonConvection/src`,
 and after package updates.
 
 **4. Measure throughput (optional).** Run the full domain for one simulated hour in an interactive GPU session:
@@ -320,7 +335,8 @@ Failures met while setting up the cluster, with causes and fixes:
   `ps -u $USER -f | grep julia` (leftover sessions). Start a fresh `srun ... --gres=gpu:1`.
 - **LLVM "out of memory" or `ProcessSignaled(9)` while precompiling**: the precompile needs about 6 GB;
   login nodes usually allow less, and a multi-target `JULIA_CPU_TARGET` multiplies the need. Use
-  `sbatch precompile_job.sh` (32 GB) and the single target `JULIA_CPU_TARGET="haswell,-rdrnd"`.
+  `sbatch -p ceoas precompile_job.sh` (32 GB; `-p ceoas-arm` for aarch64) and, on x86_64, the single target
+  `JULIA_CPU_TARGET="haswell,-rdrnd"` (aarch64 uses the native target).
 - **NaN in P3 ice number above 23 km after ~15 min (or later), preceded by a growing top-cell temperature
   spread and max `Kᵘ` at the cap at 27.5 km** (`debug_nan = true`): the Float32 instability from a
   Float32 pressure solve. Keep the default `pressure_solver_type = Float64` (check that the run's copy
@@ -328,9 +344,13 @@ Failures met while setting up the cluster, with causes and fixes:
 - **CUDA out of memory during a full-size run** (not at context creation): the GPU is too small for the full
   domain (≈ 15 GiB in the default mixed precision, ≈ 30 GiB all-Float64). Request a larger GPU type, or
   reduce `Nx`, `Ny` in the driver.
-- **"Precompiling MonsoonConvection" appears on every run**: check that `JULIA_CPU_TARGET`
-  (`haswell,-rdrnd` in `~/.bashrc`) and `JULIA_DEPOT_PATH` are identical at precompile time and run time, and
-  that nothing edits `MonsoonConvection/src`.
+- **Wrong Julia, depot or CPU target in a login or interactive shell** (`julia --version` says 1.10, or `JULIA_DEPOT_PATH`
+  or `JULIA_CPU_TARGET` is not what `helpers/arch_env.sh` sets): `source helpers/arch_env.sh` (it belongs in
+  `~/.bashrc`). Work done in such a shell compiles for the wrong version or target. It writes extra cache
+  entries that the jobs do not use, so they recompile at startup, but it does not corrupt the correct ones.
+- **"Precompiling MonsoonConvection" appears on every run**: `JULIA_CPU_TARGET` and `JULIA_DEPOT_PATH` must be
+  identical at precompile time and run time. Source `helpers/arch_env.sh` in every shell (the batch scripts do),
+  and make sure nothing edits `MonsoonConvection/src`.
 - **Leftover `[MonsoonConvection] precompile_gpu` in `LocalPreferences.toml`**: from an earlier version;
   nothing reads it now. Delete that section, and keep the `CUDA_Runtime_jll` entry.
 
@@ -343,7 +363,7 @@ Failures met while setting up the cluster, with causes and fixes:
 | `monsoon_convection.jl` | Experiment driver: sounding, initial conditions, grid size, run settings. Edit freely. |
 | `MonsoonConvection/` | Local package with the model setup, output and restart logic. Precompiled. |
 | `setup_precompile.jl` | Precompiles `MonsoonConvection` (CPU warm-up run) and checks that it loads. Same on every machine. |
-| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory; no GPU needed. |
+| `precompile_job.sh` | Slurm batch job that runs `setup_precompile.jl` on a compute node with enough memory; no GPU needed, but name a partition of the architecture to compile for (`-p ceoas` x86_64, `-p ceoas-arm` aarch64). |
 | `check_gpu.jl` | Staged check that a GPU node can run the model; `--smoke_test` adds a 10-min run, `--cpu` tests the script without a GPU. |
 | `monsoon_job.sh` | Slurm batch script for GPU runs: `sbatch -p <partition> --gres=<gpu> monsoon_job.sh <run directory>`. |
 | `helpers/` | `preflight.jl` (flags and the GPU check, before any package loads), `pressure_solver_precision.jl` (run-time override giving the pressure solve its own precision; a stopgap until Breeze offers this), `arch_env.sh`, soundings and graph helpers. |
