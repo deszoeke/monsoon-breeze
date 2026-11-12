@@ -141,8 +141,8 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
     does not output); resolved ⟨w′qₜ′⟩ and ⟨w′θ′⟩ profiles from `_fields.nc` (`resolved_flux`); θ–qv joint
     PDF from `_surface.nc`; time–height qv, qcl, θ; moist N² and Ri (`moist_stability`, pressure
     hydrostatic from 1015 hPa because the files hold none; N² uses θˡⁱ).
-  - Gaps: no subgrid flux, no surface-flux outputs (u*, kinematic qv and θ fluxes), so the CM1 u*–q*, u*–θ*
-    PDFs are not ported. Adding those outputs is a MonsoonConvection edit (recompile; do it as one batch).
+  - Gaps: no subgrid flux. The surface-flux outputs now exist (next section) but are untested, so the CM1
+    u*–q*, u*–θ* PDFs are not ported yet.
   - cm1-out has no CAPE, cold-pool, mass-flux or budget code; "coldpools" there is a lowest-level map.
 - **Separate plotting session.** Plot iteration (color scales, axes, log scales, new panels) runs
   in its own Claude session, started in `plots/` (`claude --model sonnet`), with instructions in
@@ -150,6 +150,31 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
   Model, Breeze, run and physical-interpretation questions come back to the main session
   (repository root), which sends lookups to `code-reader`. The user routes between them; the
   sessions share only files and git, so pull and re-read before editing.
+
+## Flux outputs (2026-11-11; compiled and run: not yet)
+
+- **`_profiles.nc`** (`d0e3242`): resolved fluxes `uw`, `vw`, `wtheta`, `wqv` (⟨w′a′⟩, (z, time), hourly
+  means of the instantaneous flux). Deviations are about the instantaneous horizontal mean, in two
+  passes (`deviation(a) = a - Field(Average(a, dims=(1, 2)))`), because ⟨aw⟩ - ⟨a⟩⟨w⟩ cancels badly for
+  θ ≈ 300 K, θ′ ≈ 0.1 K. w and a are interpolated to cell centers with `@at`. No subgrid flux.
+  Tested only as a pattern, on plain Oceananigans CPU fields (0.114, scratch env): θ flux matches an
+  offline calculation to 4e-10 (Float32), and the mean fields refresh when the fields change. u needs its
+  halos filled, as the model's are after each step.
+- **`_surface.nc`** (`a14a3a0`): `uw_sfc`, `vw_sfc`, `wtheta_sfc`, `wqv_sfc`, the bulk surface fluxes
+  (upward-positive, kinematic). Breeze never stores them (the bulk boundary conditions are evaluated
+  inline in the tendency kernels), so `BoundaryConditionOperation(ρa, :bottom, model)` evaluates the
+  same condition and a `KernelFunctionOperation` divides by the lowest-level density. u* = (uw² + vw²)^¼
+  at cell centers, computed offline.
+- **Check on the first run** (CPU small test, then GPU): `wtheta_sfc` against the lowest level of `wtheta`;
+  signs (a warm sea gives positive `wtheta_sfc`, `wqv_sfc`; drag gives `uw_sfc` opposite the wind);
+  that `ρ[i, j, 1]` indexing of the reduced density works; and that `uw_sfc` at the faces is written.
+- Both are package edits: recompile (below). CM1 comparisons: `plots/diag.jl` (`resolved_flux`).
+- **Compile on sundog** (WSL, 32 cores, 31 GB, RTX A2000; Julia 1.13.1; no Manifest or Breeze in the depot
+  yet): `julia --project -e 'using Pkg; Pkg.instantiate()'`, then `julia --project setup_precompile.jl`,
+  then the small test in the README Quick start (`arch = :cpu`, `small_test = true`).
+- **Graphs** (`helpers/graph_package.sh`, `99b5882`): uses `../Breeze.jl` when it exists, since Breeze is not
+  in this depot, and writes a `.graphifyignore` into each copy (graphify honors `.gitignore`, which ignores
+  `graphify-*/`). The Oceananigans graph needs Oceananigans installed or a `../Oceananigans.jl` checkout.
 
 ## Vapor-source experiments (planned 2026-10-27)
 
