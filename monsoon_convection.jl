@@ -47,6 +47,10 @@ pressure_solver_type    = Float64      # Float32 is unstable on the full domain 
 implicit_rain_sink      = false        # not needed: Breeze PR #1066 closed the issue (#1072) in 0.12.1, where
                                        # this is ignored with a warning; Breeze 0.12.0 only
 
+# Output options
+flux_outputs            = true         # vertical-flux diagnostics (wu, F_u_sgs, F_qr_sed, ...) in profiles/surface files;
+                                       # false builds no flux operations: no compute or memory cost
+
 # Stability options
 sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
 bounded_advection       = true         # bounds-preserving WENO for scalars; false: plain WENO(5)
@@ -163,7 +167,7 @@ restart || set_initial_conditions!(model, sounding; δθ, seed)
 
 prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
 simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, sedimentation_cfl,
-                              checkpoint_interval)
+                              checkpoint_interval, flux_outputs)
 
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"

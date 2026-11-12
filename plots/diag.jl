@@ -14,9 +14,6 @@ using .Thermo
 
 const g = Thermo.g
 
-# vertical average of a z-face field (Nz+1 levels) to cell centers
-faces_to_centers(a) = (a[:, :, 1:end-1] .+ a[:, :, 2:end]) ./ 2
-
 # a snapshot variable of `kind` at time index n, or the sum over several names
 function read_sum(rundir, names; kind = "fields", n = last)
     s = read_snapshot(rundir, names[1]; kind, n)
@@ -30,18 +27,24 @@ end
 """
     resolved_flux(rundir, names; n = last, prefix = "monsoon_convection")
 
-Horizontal-mean resolved flux ⟨w′a′⟩ (z cell centers) of a = the sum of the 3D variables `names`
+Horizontal-mean resolved flux ⟨w′a′⟩ on the z faces of a = the sum of the 3D variables `names`
 (e.g. `["qv", "qcl", "qr"]` for total water, `["theta"]` for θ), from `_fields.nc` at time index `n`
-(an integer or `first`/`last`). Primes are deviations from the horizontal mean; w is averaged
-from the z faces to cell centers. Returns `(; t, z, flux)`, units of a times m/s. Subgrid
-(closure) fluxes are not in the output, so this is the resolved flux only.
+(an integer or `first`/`last`). Primes are deviations from the horizontal mean; a is averaged from the
+cell centers to the interior faces, and the flux is zero at the bottom and top faces (w = 0). Returns
+`(; t, z, flux)`, units of a times m/s: the same quantity as `wtheta`, `wqv`, ... in `_profiles.nc`
+(`wu`, `wv`, `wtheta`, `wq*` there are resolved covariances). The closure flux `F_*_sgs`, the surface
+boundary-condition flux `F_*_sfc` and the sedimentation flux `F_*_sed` are separate, and not in this one.
 """
 function resolved_flux(rundir, names; n = last, prefix = "monsoon_convection")
-    w = faces_to_centers(read_snapshot(rundir, "w"; n, prefix).data)
+    w = read_snapshot(rundir, "w"; n, prefix)
     a = read_sum(rundir, names; n)
-    w′ = w .- mean(w; dims = (1, 2))
+    w′ = w.data .- mean(w.data; dims = (1, 2))
     a′ = a.data .- mean(a.data; dims = (1, 2))
-    return (; t = a.t, z = a.z, flux = vec(mean(w′ .* a′; dims = (1, 2))))
+    flux = zeros(size(w.data, 3))
+    for k in 2:size(w.data, 3)-1
+        flux[k] = mean(w′[:, :, k] .* (a′[:, :, k-1] .+ a′[:, :, k]) ./ 2)
+    end
+    return (; t = a.t, z = w.z, flux)
 end
 
 """

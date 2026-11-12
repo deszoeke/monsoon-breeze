@@ -257,6 +257,7 @@ The copy finds `helpers/` and `cm1/` through the project (`--project`), wherever
 | **Fixes to Breeze (keep on)** | | |
 | `pressure_solver_type` | `Float64` | Precision of the pressure solve. A Float32 solve is unstable on the full 512 km domain (see "Changes to Breeze defaults", 3). |
 | `implicit_rain_sink` | `true` with one-moment | Backward-Euler rain–snow collection sinks, which otherwise drive rain and snow negative (`helpers/implicit_rain_sink_correction.jl`, `breeze_issue_uncapped_collection_sinks.md`). |
+| `flux_outputs` | `true` | Vertical-flux diagnostics: resolved covariances (`wu`, `wv`, `wtheta`, `wq*`), closure fluxes (`F_*_sgs`) and sedimentation fluxes (`F_*_sed`) in `_profiles.nc`; surface fluxes (`F_*_sfc`) and bottom-face sedimentation (precipitation) maps in `_surface.nc`. `false` builds none of them, so they cost no compute or memory. |
 | **Stability options** (on in every tested run; not yet tested off with the fixes) | | |
 | `sedimentation_cfl` | `true` | Also limit Δt by the hydrometeor fall speeds, so that (w + fall speed) Δt / Δz ≤ 0.7 (see "Changes to Breeze defaults", 5). |
 | `bounded_advection` | `true` | Bounds-preserving WENO for scalars; `false` gives Breeze's plain WENO(5) (see "Changes to Breeze defaults", 4). |

@@ -29,7 +29,9 @@ using Oceananigans.AbstractOperations: KernelFunctionOperation, @at
 using Oceananigans.Advection: cell_advection_timescale
 using Oceananigans.Operators: Δzᶜᶜᶠ
 using Breeze.AtmosphereModels: moisture_prognostic_name, prognostic_field_names,
-                               dynamics_density, thermodynamic_density
+                               dynamics_density, thermodynamic_density, specific_field_name
+using Oceananigans.TurbulenceClosures: AbstractScalarDiffusivity, ExplicitTimeDiscretization,
+                                       diffusive_flux_z, viscous_flux_uz, viscous_flux_vz
 using Oceananigans.Models: BoundaryConditionOperation
 
 using NCDatasets  # required for RRTMGP lookup tables
@@ -443,6 +445,27 @@ const hydrometeors = Dict("cl" => "cloud liquid", "r" => "rain", "i" => "ice (to
                           "l" => "liquid (total)", "ci" => "cloud ice", "sn" => "snow",
                           "f" => "rime on ice", "wi" => "liquid water on ice")
 
+# Vertical-flux variables: F_<var>_<kind> and the resolved covariances w<q> of water mass fractions.
+# All kinematic (per unit mass of air) and upward-positive: momentum m2 s-2, θ K m s-1, q kg kg-1 m s-1.
+const flux_kinds = Dict("sgs" => "subgrid (closure) vertical flux of",
+                        "sfc" => "surface boundary-condition flux of",
+                        "sed" => "sedimentation flux (q times fall speed, negative downward) of")
+water_name(suffix) = suffix == "v" ? "water vapor mass fraction" : get(hydrometeors, suffix, suffix) * " mass fraction"
+function flux_attributes(name::Symbol)
+    str = string(name)
+    if startswith(str, "F_")
+        _, var, kind = split(str, "_"; limit = 3)
+        units = var in ("u", "v") ? "m2 s-2" : var == "theta" ? "K m s-1" : "kg kg-1 m s-1"
+        what = var == "u" ? "eastward momentum" : var == "v" ? "northward momentum" :
+               var == "theta" ? "liquid-ice potential temperature" : water_name(var[2:end])
+        return Dict("long_name" => "$(flux_kinds[kind]) $what", "units" => units)
+    elseif startswith(str, "wq") && name ∉ (:wqv,)
+        return Dict("long_name" => "resolved vertical flux <w'q'> of $(water_name(str[3:end]))",
+                    "units" => "kg kg-1 m s-1")
+    end
+    return nothing
+end
+
 function netcdf_attributes(name::Symbol)
     known = Dict(:u     => ("eastward wind", "m s-1"),
                  :v     => ("northward wind", "m s-1"),
@@ -456,12 +479,10 @@ function netcdf_attributes(name::Symbol)
                  :wu    => ("resolved vertical flux of eastward momentum <w'u'>", "m2 s-2"),
                  :wv    => ("resolved vertical flux of northward momentum <w'v'>", "m2 s-2"),
                  :wtheta => ("resolved vertical flux of liquid-ice potential temperature <w'theta'>", "K m s-1"),
-                 :wqv   => ("resolved vertical flux of water vapor <w'qv'>", "kg kg-1 m s-1"),
-                 :wu_sfc => ("surface (bulk) flux of eastward momentum, upward <w'u'>", "m2 s-2"),
-                 :wv_sfc => ("surface (bulk) flux of northward momentum, upward <w'v'>", "m2 s-2"),
-                 :wtheta_sfc => ("surface (bulk) flux of liquid-ice potential temperature, upward <w'theta'>", "K m s-1"),
-                 :wqv_sfc => ("surface (bulk) flux of water vapor, upward <w'qv'>", "kg kg-1 m s-1"))
+                 :wqv   => ("resolved vertical flux of water vapor <w'qv'>", "kg kg-1 m s-1"))
     haskey(known, name) && return Dict("long_name" => known[name][1], "units" => known[name][2])
+    flux = flux_attributes(name)
+    isnothing(flux) || return flux
 
     str = string(name)
     kind, suffix = str[1], str[2:end]
@@ -482,23 +503,115 @@ end
 
 ascii_outputs(outputs) = NamedTuple(netcdf_name(name) => outputs[name] for name in keys(outputs))
 
-# The surface fluxes are the bulk boundary conditions (BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux),
+# F_*_sfc: the surface fluxes are the bulk boundary conditions (BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux),
 # which Breeze evaluates inline in the tendency kernels and never stores. `BoundaryConditionOperation`
 # evaluates the same boundary condition on demand, in the ρ-weighted units of the prognostic field
 # (ρu: kg m-1 s-2, ρθ: K kg m-2 s-1, ρqᵛ: kg m-2 s-1). Dividing by the lowest-level density gives
-# kinematic fluxes comparable with the profiles' ⟨w′a′⟩ (upward-positive, as the boundary condition
-# value is the tendency of the lowest cell times Δz). u* follows offline: (wu² + wv²)^(1/4) at centers.
+# kinematic fluxes in the units of the profiles' ⟨w′a′⟩ (but boundary conditions, not covariances; upward-positive, as the boundary condition
+# value is the tendency of the lowest cell times Δz). They are located on the bottom z face, where the
+# resolved fluxes vanish, so the total flux profile is the surface flux at z = 0 and the resolved flux above. u* follows offline: (F_u_sfc² + F_v_sfc²)^(1/4) at centers.
 @inline kinematic_surface_flux(i, j, k, grid, J, ρ) = @inbounds J[i, j, 1] / ρ[i, j, 1]
 
 function surface_fluxes(model)
     ρ = dynamics_density(model.dynamics)
-    kinematic(LX, LY, ρa) = KernelFunctionOperation{LX, LY, Center}(kinematic_surface_flux, model.grid,
+    kinematic(LX, LY, ρa) = KernelFunctionOperation{LX, LY, Face}(kinematic_surface_flux, model.grid,
                                 BoundaryConditionOperation(ρa, :bottom, model), ρ)
-    return ascii_outputs((; wu_sfc = kinematic(Face, Center, model.momentum.ρu),
-                            wv_sfc = kinematic(Center, Face, model.momentum.ρv),
-                            wθ_sfc = kinematic(Center, Center, thermodynamic_density(model.formulation)),
-                            wqᵛ_sfc = kinematic(Center, Center, model.moisture_density)))
+    return ascii_outputs((; F_u_sfc = kinematic(Face, Center, model.momentum.ρu),
+                            F_v_sfc = kinematic(Center, Face, model.momentum.ρv),
+                            F_θ_sfc = kinematic(Center, Center, thermodynamic_density(model.formulation)),
+                            F_qᵛ_sfc = kinematic(Center, Center, model.moisture_density)))
 end
+
+# F_*_sgs: the subgrid (closure) vertical flux, upward and kinematic, on the z faces. It comes from the
+# closure's own flux interface (`diffusive_flux_z`, `viscous_flux_uz`, `viscous_flux_vz`), called as the
+# tendency kernels call them but with ExplicitTimeDiscretization: TKEBasedTurbulenceClosure is vertically
+# implicit, so with its own discretization the explicit flux is zero at interior faces and the flux exists
+# only inside the tridiagonal solve. Because the closure supplies the flux, a different diffusivity closure
+# (Smagorinsky, AMD, ...) works unchanged. A closure that is not an AbstractScalarDiffusivity (a nonlocal
+# or mass-flux scheme) would silently return zero from the fallback methods, so it is an error until a
+# method for its flux is written here. Breeze multiplies the flux by the interpolated density, which a
+# kinematic flux does not need. The flux is zeroed at the bottom and top faces: there it is the boundary
+# condition (F_*_sfc) or zero.
+@inline interior_face(k, grid) = 1 < k < size(grid, 3) + 1
+
+@inline sgs_flux_u(i, j, k, grid, closure, K, clock, fields) =
+    ifelse(interior_face(k, grid),
+           viscous_flux_uz(i, j, k, grid, ExplicitTimeDiscretization(), closure, K, clock, fields, nothing), zero(grid))
+@inline sgs_flux_v(i, j, k, grid, closure, K, clock, fields) =
+    ifelse(interior_face(k, grid),
+           viscous_flux_vz(i, j, k, grid, ExplicitTimeDiscretization(), closure, K, clock, fields, nothing), zero(grid))
+@inline sgs_flux_c(i, j, k, grid, closure, K, id, c, clock, fields) =
+    ifelse(interior_face(k, grid),
+           diffusive_flux_z(i, j, k, grid, ExplicitTimeDiscretization(), closure, K, id, c, clock, fields, nothing), zero(grid))
+
+# F_*_sed: the sedimentation flux ⟨q w_fall⟩ of each sedimenting hydrometeor, kinematic, negative downward.
+# Sedimentation is advection with the fall speed: Breeze adds it to w in the hydrometeor's own advection
+# (`model.sedimentation`). The fall speed at face k belongs to cell k (the cell above the face), so the
+# flux at face k is q[k] w_fall[k], an upwind estimate (Breeze uses its advection scheme). At z = 0 it is
+# the precipitation flux leaving the domain (kg m-2 s-1 after multiplying by ρ); the top face is zero.
+@inline sed_flux(i, j, k, grid, w, q) = ifelse(k <= size(grid, 3), @inbounds(q[i, j, k] * w[i, j, k]), zero(grid))
+
+# The water mass fractions that have fluxes: name => (specific field, scalar id in the closure). Vapor is
+# the closure's moisture scalar (id 2); each microphysical mass fraction ρq* follows at id 2 + position.
+function water_species(model)
+    names = prognostic_field_names(model.microphysics)
+    species = Pair{Symbol, Any}[:qᵛ => (specific_humidity(model), 2)]
+    for (i, name) in enumerate(names)
+        startswith(string(name), "ρq") || continue
+        field = model.microphysical_fields[specific_field_name(name)]
+        push!(species, specific_field_name(name) => (field, i + 2))
+    end
+    return species
+end
+
+function subgrid_fluxes(model, u, v, θ)
+    closure = model.closure
+    closure isa AbstractScalarDiffusivity || error("""subgrid_fluxes: no flux diagnostic for $(typeof(closure)).
+        The closure fluxes are taken from diffusive_flux_z and viscous_flux_{u,v}z, which only diffusivity closures
+        (AbstractScalarDiffusivity) define; a nonlocal closure needs its own method here.""")
+    K, clock, fields, grid = model.closure_fields, model.clock, Oceananigans.fields(model), model.grid
+    F(LX, LY, f, args...) = Average(KernelFunctionOperation{LX, LY, Face}(f, grid, args...), dims=(1, 2))
+    fluxes = (; F_u_sgs = F(Face, Center, sgs_flux_u, closure, K, clock, fields),
+                F_v_sgs = F(Center, Face, sgs_flux_v, closure, K, clock, fields),
+                F_θ_sgs = F(Center, Center, sgs_flux_c, closure, K, Val(1), θ, clock, fields))
+    for (name, (c, id)) in water_species(model)
+        fluxes = merge(fluxes, NamedTuple{(Symbol("F_", name, "_sgs"),)}((F(Center, Center, sgs_flux_c, closure, K, Val(id), c, clock, fields),)))
+    end
+    return ascii_outputs(fluxes)
+end
+
+# sedimentation fluxes: profiles (horizontal means) and, for the surface file, the maps at the bottom face
+function sedimentation_fluxes(model; average = true)
+    out = NamedTuple()
+    for (name, condensate) in pairs(model.sedimentation)
+        op = KernelFunctionOperation{Center, Center, Face}(sed_flux, model.grid, condensate.velocity, condensate.specific_humidity)
+        flux = average ? Average(op, dims=(1, 2)) : op
+        out = merge(out, NamedTuple{(Symbol("F_", specific_field_name(name), "_sed"),)}((flux,)))
+    end
+    return ascii_outputs(out)
+end
+
+# Resolved vertical fluxes ⟨a′w′⟩, a′ and w′ deviations from the instantaneous horizontal mean, in two
+# passes: the mean Fields first, then the average of the product of deviations. ⟨aw⟩ - ⟨a⟩⟨w⟩ would
+# lose digits to cancellation (θ ≈ 300 K, θ′ ≈ 0.1 K). The mean Fields are recomputed whenever the
+# flux is evaluated. The fluxes are on the z faces, where w lives and the flux divergence ∂ₖ⟨w′a′⟩ is
+# taken to cell centers; a is interpolated to the faces. They vanish at the bottom and top faces (w = 0).
+# The closure (subgrid) flux is the separate F_*_sgs, and sedimentation F_*_sed.
+function resolved_fluxes(model, u, v, w, θ)
+    deviation(a) = a - Field(Average(a, dims=(1, 2)))
+    w′ = deviation(w)
+    flux(a) = Average(@at((Center, Center, Face), deviation(a) * w′), dims=(1, 2))
+    fluxes = (; wu = flux(u), wv = flux(v), wθ = flux(θ))
+    for (name, (c, _)) in water_species(model)          # vapor and every water mass fraction: ⟨w′q′⟩
+        fluxes = merge(fluxes, NamedTuple{(Symbol("w", name),)}((flux(c),)))
+    end
+    return ascii_outputs(fluxes)
+end
+
+# All the flux profiles for `_profiles.nc`; `build_simulation(...; flux_outputs = false)` skips them, so that
+# none of these operations is built, evaluated or stored.
+flux_profiles(model, u, v, w, θ) =
+    merge(resolved_fluxes(model, u, v, w, θ), subgrid_fluxes(model, u, v, θ), sedimentation_fluxes(model))
 
 #####
 ##### Sedimentation in the time-step limit
@@ -575,7 +688,8 @@ function build_simulation(model;
                           surface_interval = 1hour,
                           fields_interval = small_test ? 30minutes : 1day,
                           checkpoint_interval = fields_interval,
-                          sedimentation_cfl = false)
+                          sedimentation_cfl = false,
+                          flux_outputs = true)     # vertical-flux diagnostics; false builds none of them (no cost)
 
     simulation = Simulation(model; Δt, stop_time, stop_iteration, wall_time_limit)
     timescale = sedimentation_cfl ? SedimentationLimitedTimescale(sedimentation_rate_profile(model)) :
@@ -613,17 +727,7 @@ function build_simulation(model;
     outputs = ascii_outputs(merge((; u, v, w, θ, T, qᵛ), microphysics_outputs(model)))
 
     profiles = NamedTuple(name => Average(outputs[name], dims=(1, 2)) for name in keys(outputs))
-    # Resolved vertical fluxes ⟨a′w′⟩, a′ and w′ deviations from the instantaneous horizontal mean, in two
-    # passes: the mean Fields first, then the average of the product of deviations. ⟨aw⟩ - ⟨a⟩⟨w⟩ would
-    # lose digits to cancellation (θ ≈ 300 K, θ′ ≈ 0.1 K). The mean Fields are recomputed whenever the
-    # flux is evaluated. The deviations are at cell centers (u, v, w are interpolated there). The
-    # closure (subgrid) flux is not included.
-    deviation(a) = a - Field(Average(a, dims=(1, 2)))
-    w′ = deviation(w)
-    flux(a) = Average(@at((Center, Center, Center), deviation(a) * w′), dims=(1, 2))
-    fluxes = ascii_outputs((; wu = flux(u), wv = flux(v), wθ = flux(θ), wqᵛ = flux(qᵛ)))
-
-    profiles = merge(profiles, fluxes,
+    profiles = merge(profiles, flux_outputs ? flux_profiles(model, u, v, w, θ) : NamedTuple(),
                      (radiative_flux_divergence = Average(radiation.flux_divergence, dims=(1, 2)),
                       w2 = Average(w^2, dims=(1, 2))))
 
@@ -638,7 +742,8 @@ function build_simulation(model;
                      filename = prefix * "_profiles.nc",
                      schedule = AveragedTimeInterval(profiles_interval))
 
-    surface_outputs = merge(outputs, surface_fluxes(model))   # lowest level; (x, y, 1)
+    # lowest level, (x, y, 1): bulk surface fluxes and the precipitation (sedimentation) flux at the bottom face
+    surface_outputs = flux_outputs ? merge(outputs, surface_fluxes(model), sedimentation_fluxes(model; average = false)) : outputs
 
     simulation.output_writers[:surface] =
         NetCDFWriter(model, surface_outputs; netcdf_kw..., output_attributes = output_attributes(surface_outputs),

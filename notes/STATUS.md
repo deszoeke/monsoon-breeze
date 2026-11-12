@@ -153,22 +153,50 @@ The experiment tree is redone with P3 microphysics (`microphysics = :p3`), on Br
 
 ## Flux outputs (2026-11-11; compiled and run on sundog CPU small test 2026-11-12)
 
-- **`_profiles.nc`** (`d0e3242`): resolved fluxes `wu`, `wv`, `wtheta`, `wqv` (⟨w′a′⟩, (z, time), hourly
+- **`_profiles.nc`** (`d0e3242`): resolved fluxes `wu`, `wv`, `wtheta`, `wqv` (⟨w′a′⟩ on z faces `z_aaf`, (z, time), hourly
   means of the instantaneous flux). Deviations are about the instantaneous horizontal mean, in two
   passes (`deviation(a) = a - Field(Average(a, dims=(1, 2)))`), because ⟨aw⟩ - ⟨a⟩⟨w⟩ cancels badly for
-  θ ≈ 300 K, θ′ ≈ 0.1 K. w and a are interpolated to cell centers with `@at`. No subgrid flux.
+  θ ≈ 300 K, θ′ ≈ 0.1 K. a is interpolated to the z faces with `@at` (2026-11-12; first written at centers, `d0e3242`). No subgrid flux.
   Tested only as a pattern, on plain Oceananigans CPU fields (0.114, scratch env): θ flux matches an
   offline calculation to 4e-10 (Float32), and the mean fields refresh when the fields change. u needs its
   halos filled, as the model's are after each step.
-- **`_surface.nc`** (`a14a3a0`): `wu_sfc`, `wv_sfc`, `wtheta_sfc`, `wqv_sfc`, the bulk surface fluxes
+- **`_surface.nc`** (`a14a3a0`): `F_u_sfc`, `F_v_sfc`, `F_theta_sfc`, `F_qv_sfc`, the bulk surface fluxes
   (upward-positive, kinematic). Breeze never stores them (the bulk boundary conditions are evaluated
   inline in the tendency kernels), so `BoundaryConditionOperation(ρa, :bottom, model)` evaluates the
-  same condition and a `KernelFunctionOperation` divides by the lowest-level density. u* = (wu² + wv²)^¼
+  same condition and a `KernelFunctionOperation` divides by the lowest-level density. u* = (F_u_sfc² + F_v_sfc²)^¼
   at cell centers, computed offline.
-- **Check on the first run** (CPU small test, then GPU): `wtheta_sfc` against the lowest level of `wtheta`;
-  signs (a warm sea gives positive `wtheta_sfc`, `wqv_sfc`; drag gives `wu_sfc` opposite the wind);
-  that `ρ[i, j, 1]` indexing of the reduced density works; and that `wu_sfc` at the faces is written.
-- **Small test result (sundog CPU, 1 h; file times 0 and 3600 s):** compiles and runs, all flux variables are
+- **Check on the first run** (CPU small test, then GPU): `F_theta_sfc` against the lowest level of `wtheta`;
+  signs (a warm sea gives positive `F_theta_sfc`, `F_qv_sfc`; drag gives `F_u_sfc` opposite the wind);
+  that `ρ[i, j, 1]` indexing of the reduced density works; and that `F_u_sfc` at the faces is written.
+- **Naming and meaning** (2026-11-12), all kinematic, upward-positive, on z faces (`z_aaf`), zero at the bottom and
+  top faces except `F_*_sfc`. Per water species `q` (vapor `qv` and every microphysics mass fraction: `qcl`,
+  `qr`, `qi`, `qf`, `qwi` in P3; `qcl`, `qci`, `qr`, `qsn` in one-moment), from the model's scheme:
+  - `wu`, `wv`, `wtheta`, `wq<species>`: resolved covariances ⟨w′a′⟩ (`_profiles.nc`).
+  - `F_u_sgs`, `F_v_sgs`, `F_theta_sgs`, `F_<q>_sgs`: subgrid (closure) flux (`_profiles.nc`). Taken from the
+    closure's own interface (`diffusive_flux_z`, `viscous_flux_{u,v}z`, with ExplicitTimeDiscretization,
+    because TKEBasedTurbulenceClosure is vertically implicit and its flux is zero at interior faces
+    otherwise), so another diffusivity closure works unchanged. A closure that is not an
+    `AbstractScalarDiffusivity` (nonlocal, mass flux) raises an error in `subgrid_fluxes` until a method
+    for its flux is added; the fallbacks would silently return zero.
+  - `F_<q>_sed`: sedimentation flux ⟨q w_fall⟩ (negative downward) of each sedimenting hydrometeor, from
+    `model.sedimentation` (fall speeds are advection velocities, no flux is stored). Upwind estimate
+    q[k] w_fall[k] (Breeze uses its advection scheme). In `_profiles.nc` as the horizontal mean; in
+    `_surface.nc` the bottom face is the precipitation flux map (×ρ for kg m-2 s-1).
+  - `F_u_sfc`, `F_v_sfc`, `F_theta_sfc`, `F_qv_sfc` (`_surface.nc`, bottom face): the bulk boundary-condition
+    fluxes, not covariances.
+  - Total flux of a species at an interior face: `w<q> + F_<q>_sgs + F_<q>_sed`; at z = 0, `F_*_sfc`
+    (vapor, θ, momentum) and `F_<q>_sed` (precipitation).
+- **Upstream:** Breeze has no standard flux diagnostics (its examples average raw `w*θ` products). Breeze issue #1250 is open
+  (2026-11-12); a guide for a Breeze.jl PR is in `issues/breeze_pr_vertical_flux_diagnostics.md`.
+- **Option** `flux_outputs` (driver setting, `build_simulation` keyword, default `true`): `false` builds none of
+  the flux operations, so they cost no compute or memory.
+- **Test of the drafted code** (sundog CPU small test, P3, 1 h, scratch dir): compiles and runs; all variables
+  written on `z_aaf`. `F_u_sgs` at 50 m = -1.29e-2 vs `F_u_sfc` -1.28e-2; `F_v_sgs` +2.3e-3 vs +2.7e-3;
+  `F_qv_sgs` 2.3e-5 vs 2.7e-5: sgs just above the surface matches the boundary-condition flux in sign and size
+  and decays upward. The sedimentation and hydrometeor fluxes are all zero (no condensate in 1 h), so those are
+  **not tested**. Open: `F_theta_sgs` is +1.3e-4 at 50 m and -2.8e-3 at 124 m, while `F_theta_sfc` is
+  +2.7e-3 (stable layer above a freshly heated cell?); check in a long run with the heat budget.
+- **Small test result (sundog CPU, 1 h; file times 0 and 3600 s; earlier names `wu_sfc`, ...):** compiles and runs, all flux variables are
   in the files. The first record (t = 0) is exactly zero for every flux, `w` and `w2` (w = 0 initially), so
   ignore it. At 1 h the signs are as expected: `wu_sfc` ≈ -0.013 m²/s² (opposite the wind), `wv_sfc` ≈ 0.003,
   `wtheta_sfc` ≈ 2.7e-3 K m/s, `wqv_sfc` ≈ 2.7e-5 kg/kg m/s (≈ 80 W/m² latent). The resolved `wtheta` at
