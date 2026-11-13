@@ -60,6 +60,10 @@ LOG=$PWD/slurm-$SLURM_JOB_ID.out
 echo "log: $LOG"
 exec > "$LOG" 2>&1
 echo "$header"
+echo "start: $(date -Is)"
+# end stamp, also when Slurm stops the job at its time limit (SIGTERM; srun then ends too)
+trap 'echo "end: $(date -Is), exit status $?"' EXIT
+trap 'exit 143' TERM
 echo "settings:"
 sed -n '/^##### Settings/,/^##### Setup/p' monsoon_convection.jl | grep -E '^[a-z_]+ += ' | sed 's/ *#.*//; s/^/  /'
 
