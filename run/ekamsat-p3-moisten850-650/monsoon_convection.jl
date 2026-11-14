@@ -39,13 +39,17 @@ sponge_timescale        = 300seconds   # damping time scale at the top
 # Experiment: external vapor source, constant and horizontally uniform, vapor only (no heating).
 # The control spins up for 2 days with no source; each experiment branches from its 2-day
 # checkpoint with a source in one layer: (1000, 850), (850, 650) or (650, 440) hPa.
-vapor_source_rate       = 1.0e-3         # kg/kg/day; 0 for the control
+vapor_source_rate       = 1.0e-3       # kg/kg/day; 0 for the control
 vapor_source_layer      = (850, 650)   # (bottom, top) pressures, hPa
 
 # Fixes to Breeze
 pressure_solver_type    = Float64      # Float32 is unstable on the full domain (README)
 implicit_rain_sink      = false        # not needed: Breeze PR #1066 closed the issue (#1072) in 0.12.1, where
                                        # this is ignored with a warning; Breeze 0.12.0 only
+
+# Output options
+flux_outputs            = true         # vertical-flux diagnostics (wu, F_u_sgs, F_qr_sed, ...) in profiles/surface files;
+                                       # false builds no flux operations: no compute or memory cost
 
 # Stability options
 sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
@@ -166,7 +170,7 @@ restart || set_initial_conditions!(model, sounding; δθ, seed)
 
 prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
 simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, sedimentation_cfl,
-                              checkpoint_interval)
+                              checkpoint_interval, flux_outputs)
 
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"

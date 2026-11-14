@@ -15,7 +15,7 @@ small_test              = false        # true: 32×16 columns (16 × 8 km), 1 h;
 restart                 = true         # continue from restart_checkpoint, appending to this directory's NetCDF
 restart_checkpoint      = :latest      # :latest (this directory) | another run's directory, e.g. "../ekamsat-ctl",
                                        # to branch from its newest checkpoint; then set back to :latest
-stop_time               = small_test ? 1hour : 2days  # TOTAL simulated time, from the original start
+stop_time               = small_test ? 1hour : 7days  # TOTAL simulated time, from the original start
 checkpoint_interval     = small_test ? 30minutes : 1hour  # only the latest checkpoint is kept; none on NaN
 debug_nan               = false        # print extremes every 10 iterations; stop at the first NaN/Inf
 
@@ -32,7 +32,7 @@ seed                    = 2023         # random seed for the perturbations
 
 # Model
 float_type              = Float32      # model precision: Float32 (standard on GPUs) | Float64
-microphysics            = :one_moment  # :one_moment (cloud liquid, ice, rain, snow) | :p3 (not production ready)
+microphysics            = :p3          # :one_moment (cloud liquid, ice, rain, snow) | :p3 (not production ready)
 sponge_variables        = :w           # :w damps w only | :all also relaxes u, v, θ to the sounding
 sponge_timescale        = 300seconds   # damping time scale at the top
 
@@ -46,6 +46,10 @@ vapor_source_layer      = (850, 650)   # (bottom, top) pressures, hPa
 pressure_solver_type    = Float64      # Float32 is unstable on the full domain (README)
 implicit_rain_sink      = false        # not needed: Breeze PR #1066 closed the issue (#1072) in 0.12.1, where
                                        # this is ignored with a warning; Breeze 0.12.0 only
+
+# Output options
+flux_outputs            = true         # vertical-flux diagnostics (wu, F_u_sgs, F_qr_sed, ...) in profiles/surface files;
+                                       # false builds no flux operations: no compute or memory cost
 
 # Stability options
 sedimentation_cfl       = true         # the time step also keeps |w + w_fall| Δt / Δz ≤ cfl
@@ -163,7 +167,7 @@ restart || set_initial_conditions!(model, sounding; δθ, seed)
 
 prefix = small_test ? "monsoon_convection_small_test" : "monsoon_convection"
 simulation = build_simulation(model; stop_time, wall_time_limit, small_test, restart, prefix, sedimentation_cfl,
-                              checkpoint_interval)
+                              checkpoint_interval, flux_outputs)
 
 @info "Monsoon convection: $(Nx)×$(Ny)×$(size(model.grid, 3)) on $(hardware) in $(Oceananigans.defaults.FloatType), " *
       "stop time $(prettytime(stop_time)), wall-time limit $(isinf(wall_time_limit) ? "none" : prettytime(wall_time_limit))"
