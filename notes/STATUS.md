@@ -61,6 +61,12 @@ The P3 tree is the current experiment; output goes to `run/ekamsat-p3-*` on the 
 - The four branches started from its 2-day checkpoint (GH200) and stopped at the 6 h wall limit,
   checkpointing 10 min before. They were resubmitted with a 12 h limit (`monsoon_job.sh`).
 - All four resumed from their own checkpoints (`restart_checkpoint = :latest`).
+- 2026-11-13: moisten1000-850 and moisten850-650 restarts failed (`Did not find a Superblock`).
+  Their wall-time-stop checkpoints were truncated (2.50 GB and 0.15 GB; a full one is 2.80 GB):
+  Slurm killed the jobs mid-write. Cause: the driver set `wall_time_limit` at startup, but
+  Oceananigans counts run time from `run!`, so ~8 min of setup used up the 10 min margin. Fixed:
+  the driver sets it again just before `run_simulation!`. Recovery: delete the truncated file;
+  the restart then uses the previous hourly checkpoint, which is still there.
 - P3 output names differ from one-moment: `qcl qr nr qi ni qf bf qwi qv` (plus
   `surface_temperature`); no `qci`, `qsn`. `qi` is total ice, `qf` rime mass, `bf` rime volume,
   `qwi` liquid on ice, `n*` numbers per kg of moist air.

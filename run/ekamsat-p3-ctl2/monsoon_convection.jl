@@ -60,9 +60,12 @@ repo = dirname(Base.active_project())
 include(joinpath(repo, "helpers", "preflight.jl"))
 arch == :gpu && require_gpu()
 
-# Stop and checkpoint 10 min before a Slurm job's time limit; no limit outside Slurm
-wall_time_limit = haskey(ENV, "SLURM_JOB_END_TIME") ?
-                  parse(Int, ENV["SLURM_JOB_END_TIME"]) - time() - 10minutes : Inf
+# Stop and checkpoint 10 min before a Slurm job's time limit; no limit outside Slurm. Set again
+# just before time stepping: Oceananigans counts run time from run!, so setup and compilation
+# would otherwise eat the margin and Slurm would kill the final checkpoint write.
+time_left() = haskey(ENV, "SLURM_JOB_END_TIME") ?
+              parse(Int, ENV["SLURM_JOB_END_TIME"]) - time() - 10minutes : Inf
+wall_time_limit = time_left()
 
 using Oceananigans
 
@@ -190,6 +193,8 @@ end
 include(joinpath(repo, "helpers", "run_diagnostics.jl"))
 debug_nan && add_nan_check!(simulation; sponge_bottom)
 bounded_advection && add_limiter_bounds_check!(simulation; debug = debug_nan)
+
+simulation.wall_time_limit = time_left() # the margin counts from here, after setup
 
 # Errors can be thousands of lines (CUDA lists every field of a non-isbits argument, and stack
 # frames print full type parameters). Keep the log short: write the whole error to error.log

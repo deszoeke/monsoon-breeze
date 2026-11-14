@@ -796,7 +796,7 @@ function run_simulation!(simulation)
         @info "Reached stop time $(prettytime(simulation.stop_time)); final checkpoint written."
     elseif simulation.run_wall_time >= simulation.wall_time_limit
         @info "Wall-time limit reached at t = $(prettytime(simulation)); checkpoint written. " *
-              "Continue with --restart (same --stop_time, from the same run directory)."
+              "Continue with restart = true (same stop_time, from the same run directory)."
     end
     return simulation
 end
